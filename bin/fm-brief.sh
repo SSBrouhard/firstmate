@@ -43,7 +43,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 # Setup
-You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
+You are in a disposable git worktree of $REPO, created from a clean default-branch base.
 This is a SCOUT task: the deliverable is a written report, not a PR.
 The worktree is your laboratory - install, run, edit, and make scratch commits freely; all of it is discarded at teardown.
 The report is the only thing that survives, so anything worth keeping must be in it.
@@ -127,8 +127,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 {TASK}
 
 # Setup
-You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
-1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+You are in a disposable git worktree of $REPO, created from a clean default-branch base.
+1. First action: create or switch to your task branch: \`git checkout -B fm/$ID\`$SETUP2
 
 # Rules
 $RULE1

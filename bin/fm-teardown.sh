@@ -12,6 +12,8 @@
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/fm-backend.sh
+. "$FM_ROOT/bin/fm-backend.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
 STATE="$FM_ROOT/state"
 ID=$1
@@ -22,6 +24,10 @@ META="$STATE/$ID.meta"
 WT=$(grep '^worktree=' "$META" | cut -d= -f2-)
 T=$(grep '^window=' "$META" | cut -d= -f2-)
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
+BACKEND=$(grep '^backend=' "$META" | cut -d= -f2- || true)
+[ -n "$BACKEND" ] || BACKEND=tmux
+ORCA_WORKTREE_ID=$(grep '^orca_worktree_id=' "$META" | cut -d= -f2- || true)
+ORCA_TERMINAL=$(grep '^terminal=' "$META" | cut -d= -f2- || true)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -91,15 +97,32 @@ if [ -d "$WT" ]; then
   fi
   # Remove our hook file so a reused pool worktree cannot fire signals for a dead task.
   rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js"
-  # Kills remaining processes in the worktree (including the agent), resets, returns
-  # to pool. treehouse resolves the pool from the working directory, so run it from
-  # the project.
-  ( cd "$PROJ" && treehouse return --force "$WT" )
+  case "$BACKEND" in
+    tmux)
+      # Kills remaining processes in the worktree (including the agent), resets, returns
+      # to pool. treehouse resolves the pool from the working directory, so run it from
+      # the project.
+      ( cd "$PROJ" && treehouse return --force "$WT" )
+      ;;
+    orca)
+      if [ -n "$ORCA_TERMINAL" ]; then
+        orca terminal close --terminal "$ORCA_TERMINAL" --json >/dev/null 2>&1 || true
+      fi
+      if [ -n "$ORCA_WORKTREE_ID" ]; then
+        orca worktree rm --worktree "id:$ORCA_WORKTREE_ID" --force --json >/dev/null
+      else
+        orca worktree rm --worktree "path:$WT" --force --json >/dev/null
+      fi
+      ;;
+    *) echo "REFUSED: unknown backend '$BACKEND' for task $ID." >&2; exit 1 ;;
+  esac
 fi
 
-tmux kill-window -t "$T" 2>/dev/null || true
+if [ "$BACKEND" = tmux ]; then
+  tmux kill-window -t "$T" 2>/dev/null || true
+fi
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta" "$STATE/$ID.pi-ext.ts"
 if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
-echo "teardown $ID complete (window $T, worktree $WT)"
+echo "teardown $ID complete (backend $BACKEND, window $T, worktree $WT)"
