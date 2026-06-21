@@ -3,6 +3,8 @@
 # Usage: fm-send.sh <selector> <text...>
 #   <selector> may be fm-xyz, a tmux session:window, or a backend thread id.
 # Special keys instead of text: fm-send.sh <selector> --key Escape   (or Enter, C-c, ...)
+#   Codex App threads are app-owned: this refuses and prints the Codex Desktop
+#   host-tool action instead of sending from shell.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

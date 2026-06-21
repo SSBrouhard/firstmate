@@ -82,6 +82,7 @@ cd firstmate && claude
 That is the whole install.
 On first launch the first mate detects what its toolchain is missing (tmux/treehouse by default, Orca CLI when `FM_BACKEND=orca`, plus no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
 Codex App mode requires running firstmate inside Codex Desktop so the first mate can use the app-owned thread tools.
+For `FM_BACKEND=codex-app`, bootstrap checks only the shell-side shared tools; Codex Desktop itself is the visible thread host.
 
 **Run the default tmux backend inside tmux for the best experience.**
 firstmate works from any terminal - outside tmux, crewmates land in a detached `firstmate` session you can attach to - but launching your harness from inside tmux puts every crewmate window in your own session, one per task, where you can watch the crew work in real time or type into any window to intervene.
@@ -151,16 +152,16 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-backend.sh`          | Shared backend helpers for tmux, Orca, and Codex App runtime operations                                            |
 | `fm-codex-app`           | Dependency-free Codex App visible-thread ledger used to record thread ids, captures, pending worktrees, and archive state |
 | `fm-codex-app-smoke-check.sh` | Validate visible-thread smoke evidence so headless app-server turns cannot pass as Codex App backend success    |
-| `fm-spawn.sh`            | Backend session → isolated worktree → agent launched with its brief; records ship/scout task kind                  |
+| `fm-spawn.sh`            | Create a backend session/worktree, or prepare a Codex App visible-thread handoff; records ship/scout task kind     |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`                                          |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval                                           |
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
 | `fm-watch.sh`            | Block until supervision work is due; exits with one reason line                                                     |
-| `fm-send.sh`             | Send one literal line (or `--key Escape`) to a crewmate session                                                     |
-| `fm-peek.sh`             | Print a bounded tail of a crewmate session                                                                          |
+| `fm-send.sh`             | Send one literal line (or `--key Escape`) to tmux/Orca sessions; Codex App records print the host-tool action      |
+| `fm-peek.sh`             | Print a bounded tail of a tmux/Orca session, or a cached Codex App `read_thread` capture                           |
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
-| `fm-teardown.sh`         | Remove or return the worktree and close the backend session; protects ship work and requires scout reports          |
+| `fm-teardown.sh`         | Remove or return the worktree and close/archive the backend session; protects ship work and requires scout reports  |
 | `fm-harness.sh`          | Detect the running harness; resolve the effective crewmate harness                                                  |
 | `fm-lock.sh`             | Single-firstmate session lock                                                                                       |
 
@@ -169,6 +170,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 Personal preferences for one captain's fleet live locally in `data/captain.md`; it is gitignored and read after `data/projects.md` during bootstrap.
 Harness support is a table in section 4: claude, codex, opencode, and pi are all empirically verified; new harnesses get verified through a supervised trial task before joining the table.
+Backend selection can live in `FM_BACKEND`, `config/backend`, or `config/backend.env`, in that precedence order.
 
 Runtime tuning via environment variables (defaults shown):
 
@@ -190,13 +192,13 @@ FM_ORCA_CODEX_CONFIG="$HOME/Library/Application Support/orca/codex-runtime-home/
 
 ## Development
 
-Tracked changes to firstmate itself, including `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, and agent skill files, ship through the `no-mistakes` pipeline on a feature branch and require the captain's explicit merge approval.
+Tracked changes to firstmate itself, including `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, `docs/plans/`, `test/`, and agent skill files, ship through the `no-mistakes` pipeline on a feature branch and require the captain's explicit merge approval.
 When supervising live crewmates, keep long validation or build work in the background so watcher wakes can still be handled.
 Human-authored pull requests targeting `main` must be raised through `git push no-mistakes`; see `CONTRIBUTING.md` for the enforced contributor workflow.
 Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistakes.yaml` keeps evidence in a temp directory instead.
 
 ```sh
-bash -n bin/*.sh                          # syntax-check the toolbelt
+bash -n bin/*.sh test/*.test.sh            # syntax-check the toolbelt and shell tests
 node --check bin/fm-codex-app             # syntax-check the Codex App ledger
 shellcheck bin/*.sh                       # lint the toolbelt; CI enforces this
 for t in test/*.test.sh; do "$t"; done    # run backend and smoke-contract tests

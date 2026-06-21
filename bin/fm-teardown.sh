@@ -8,8 +8,8 @@
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product - teardown proceeds once the report exists, and refuses without it.
 # Usage: fm-teardown.sh <task-id> [--force]
-#   --force skips the unpushed-work check. Only use it when the captain has
-#   explicitly said to discard the work.
+#   --force skips teardown safety checks, including Codex App archive/worktree
+#   proof. Only use it when the captain has explicitly said to discard the work.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -9,14 +9,14 @@ date: 2026-06-21
 ## Summary
 
 Rework Firstmate's Codex App backend so `FM_BACKEND=codex-app` creates and supervises real Codex Desktop threads visible in the sidebar.
-Keep tmux and Orca behavior unchanged, and demote the current `codex app-server` path to an experimental headless transport unless it can prove visible-thread persistence.
+Keep tmux and Orca behavior unchanged, and ensure the former `codex app-server` path cannot pass as a visible backend.
 
 ---
 
 ## Problem Frame
 
 Firstmate promises a visible crew: every crewmate should live somewhere the captain can watch, interrupt, and type into.
-The current Codex App branch uses `codex app-server --stdio --enable remote_control` through `bin/fm-codex-app`.
+The earlier Codex App branch used `codex app-server --stdio --enable remote_control` through `bin/fm-codex-app`.
 Live smoke tests showed that path can complete turns, but its threads do not reliably materialize in Codex Desktop's visible, persisted thread list.
 
 That is the wrong contract for this backend.
@@ -64,8 +64,8 @@ Shell scripts can maintain Firstmate state, but they cannot pretend to be the Co
   Codex App thread creation, fork, send, handoff, read, title, pin, and archive must be done through Codex App host tools while running inside Codex Desktop.
 
 - KTD3. Treat app-server as headless until proven otherwise.
-  `bin/fm-codex-app` currently speaks app-server JSON-RPC directly.
-  Keep it only as an experimental or renamed transport path if it remains useful for non-visible automation.
+  The previous `bin/fm-codex-app` helper spoke app-server JSON-RPC directly.
+  If a non-visible app-server helper returns later, name it separately so it never satisfies visible backend acceptance criteria.
   Do not let it satisfy the visible backend acceptance criteria.
 
 - KTD4. Add an adoption path for existing visible threads.
@@ -174,18 +174,18 @@ AGENTS.md must make that distinction impossible to miss.
 
 ## Implementation Units
 
-### U1. Reclassify the Current App-Server Path
+### U1. Reclassify the Previous App-Server Path
 
-- **Goal:** Prevent the current app-server helper from being mistaken for the visible Codex App backend.
+- **Goal:** Prevent the previous app-server helper from being mistaken for the visible Codex App backend.
 - **Requirements:** R1, R4, R9, R11.
 - **Dependencies:** None.
 - **Files:** `bin/fm-codex-app`, `bin/fm-spawn.sh`, `bin/fm-backend.sh`, `bin/fm-watch.sh`, `README.md`, `AGENTS.md`, `test/fm-codex-app-headless.test.sh`.
-- **Approach:** Rename, gate, or demote the app-server transport so `FM_BACKEND=codex-app` no longer defaults to a path that live smoke proved headless.
-  Keep dependency-free Node if the helper remains, but make the name and docs honest.
+- **Approach:** Demote the app-server transport so `FM_BACKEND=codex-app` no longer defaults to a path that live smoke proved headless.
+  Keep the dependency-free Node helper as a visible-thread ledger and make the name and docs honest.
 - **Patterns to follow:** Existing backend switch structure in `bin/fm-backend.sh`; dependency-light helper style in `bin/fm-codex-app`; documentation wording in `README.md`.
 - **Test scenarios:**
-  - With the visible backend selected and no host-tool bridge available, spawn preparation fails with a clear visible-thread requirement instead of silently using app-server.
-  - With a headless experimental flag selected, the helper can still syntax-check and route to app-server commands without changing tmux or Orca paths.
+  - With the visible backend selected and no shell host-tool bridge available, spawn stops at preparation with a clear visible-thread action instead of silently using app-server.
+  - The helper syntax-checks as a ledger and contains no app-server transport path.
   - Documentation no longer describes app-server completion as a successful visible backend smoke.
 - **Verification:** A reader cannot confuse headless app-server completion with a visible Codex App thread, and existing Node syntax checks still pass for any retained helper.
 
@@ -226,7 +226,7 @@ AGENTS.md must make that distinction impossible to miss.
 - **Goal:** Make backend-neutral commands safe around visible Codex App metadata while keeping tmux and Orca behavior intact.
 - **Requirements:** R3, R4, R8, R10, R11.
 - **Dependencies:** U2, U3.
-- **Files:** `bin/fm-spawn.sh`, `bin/fm-backend.sh`, `bin/fm-send.sh`, `bin/fm-peek.sh`, `bin/fm-watch.sh`, `bin/fm-teardown.sh`, `test/fm-backend-regression.test.sh`, `test/fm-codex-app-lifecycle.test.sh`.
+- **Files:** `bin/fm-spawn.sh`, `bin/fm-backend.sh`, `bin/fm-send.sh`, `bin/fm-peek.sh`, `bin/fm-watch.sh`, `bin/fm-teardown.sh`, `test/fm-backend-regression.test.sh`, `test/fm-codex-app-state.test.sh`, `test/fm-codex-app-teardown.test.sh`.
 - **Approach:** Keep tmux and Orca command execution as-is.
   For visible Codex App records, shell commands either update local state from an app-tool result or print a precise host-tool action requirement.
   Teardown must archive the visible thread through Codex App only after the worktree safety check is satisfied or the captain explicitly approves discard.
@@ -293,7 +293,7 @@ AGENTS.md must make that distinction impossible to miss.
   Ship tasks should remain blocked until the implementation can prove that safety path.
 - **Watcher limitations:** The shell watcher cannot poll Codex App host tools by itself.
   Codex App crewmates must write status files, and Firstmate must use `read_thread` during status, stale, and heartbeat handling.
-- **PR confusion:** The captain fork has an open PR for the current headless implementation.
+- **PR confusion:** At planning time, the captain fork had an open PR for the headless implementation.
   That PR should be revised or replaced before merge; merging it as-is would codify the wrong backend contract.
 
 ---
@@ -318,10 +318,10 @@ AGENTS.md must make that distinction impossible to miss.
 
 ## Sources & Research
 
-- `bin/fm-codex-app` currently starts `codex app-server --stdio --enable remote_control` and calls thread JSON-RPC directly.
-- `bin/fm-spawn.sh` currently maps `FM_BACKEND=codex-app` to a local git worktree plus the app-server helper.
-- `bin/fm-backend.sh`, `bin/fm-send.sh`, `bin/fm-peek.sh`, `bin/fm-watch.sh`, and `bin/fm-teardown.sh` already have backend switch points that can preserve tmux and Orca behavior.
-- `README.md` and `AGENTS.md` currently describe Codex App threads as a visible backend, which the live smoke reports did not prove.
+- The previous `bin/fm-codex-app` path started `codex app-server --stdio --enable remote_control` and called thread JSON-RPC directly.
+- The previous `bin/fm-spawn.sh` path mapped `FM_BACKEND=codex-app` to a local git worktree plus the app-server helper.
+- `bin/fm-backend.sh`, `bin/fm-send.sh`, `bin/fm-peek.sh`, `bin/fm-watch.sh`, and `bin/fm-teardown.sh` now preserve tmux and Orca behavior through backend switch points.
+- `README.md` and `AGENTS.md` now describe Codex App mode as a visible-thread protocol rather than app-server completion.
 - Local smoke reports under `data/codex-app-live-smoke-*/report.md` show completed or interrupted app-server turns that were not visible or persisted in Codex Desktop thread discovery.
 - Codex Desktop currently exposes visible-thread host tools for project thread creation, thread fork, follow-up send, handoff, read, list, title, pin, and archive.
-- The captain fork PR for the current implementation is open at `https://github.com/SSBrouhard/firstmate/pull/1`; upstream push remains disabled.
+- At planning time, the captain fork PR for the headless implementation was open at `https://github.com/SSBrouhard/firstmate/pull/1`; upstream push remained disabled.

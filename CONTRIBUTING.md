@@ -38,7 +38,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 - Helper scripts in `bin/` are shell-first and dependency-light.
   Bash scripts start with a usage header comment; keep it accurate when you change behavior.
   `fm-codex-app` is Node, dependency-free, and should pass `node --check bin/fm-codex-app`.
-  `shellcheck bin/*.sh` must pass, and CI enforces it.
+  `bash -n bin/*.sh test/*.test.sh`, `shellcheck bin/*.sh`, `node --check bin/fm-codex-app`, and `for t in test/*.test.sh; do "$t"; done` must pass, and CI enforces them.
 - Changes to harness adapters (launch templates in `bin/fm-spawn.sh`, the adapter tables in `AGENTS.md`) must be verified empirically against the real harness, never written from documentation alone.
 - Changes to the Codex App backend must include real Codex Desktop visible-thread smoke evidence.
   A completed app-server turn is not enough; evidence must show a visible thread, `list_threads`, `read_thread`, `send_message_to_thread`, archive, and restart reconciliation.

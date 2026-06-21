@@ -2,6 +2,8 @@
 # Print the tail of a crewmate backend session (bounded, for cheap diagnosis).
 # Usage: fm-peek.sh <selector> [lines=40]
 #   <selector> may be fm-xyz, a tmux session:window, or a backend thread id.
+#   Codex App threads are app-owned: this prints only a cached read_thread capture,
+#   and otherwise refuses with the host-tool action to take.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

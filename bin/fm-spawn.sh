@@ -6,6 +6,9 @@
 #   opencode|pi) overrides it for this spawn. On the tmux backend only, a
 #   non-flag string containing whitespace is treated as a RAW launch command -
 #   the escape hatch for verifying new adapters.
+#   FM_BACKEND=codex-app supports only the codex harness and prepares app-owned
+#   visible thread metadata; the firstmate must create/fork/send through Codex
+#   Desktop host tools, then record the returned thread id.
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md section 7); the default is kind=ship.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:

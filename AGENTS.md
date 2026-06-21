@@ -90,6 +90,8 @@ Bootstrap is detect, then consent, then install.
 Never install anything the captain has not approved in this session.
 
 Run `bin/fm-bootstrap.sh`.
+Bootstrap reads backend selection before tool detection: `FM_BACKEND` wins over `config/backend`, then `config/backend.env`, with `tmux` as the default.
+It checks only the selected backend's shell-side tools: tmux/treehouse for `tmux`, Orca CLI for `orca`, and the shared shell tools for `codex-app`; visible Codex App thread operations still require running inside Codex Desktop.
 Bootstrap also refreshes the fleet via `bin/fm-fleet-sync.sh`: it fetches each remote-backed clone, clean-fast-forwards its local default branch when safe, and prunes local branches whose upstream is gone and that no worktree still needs, best-effort and non-fatal.
 Set `FM_FLEET_PRUNE=0` to temporarily disable that branch pruning.
 Silence means all good: say nothing and move on.
@@ -192,6 +194,7 @@ Reconcile reality with your records before doing anything else:
 2. Read `data/backlog.md`, every `state/*.meta`, and every `state/*.status`.
 3. For visible crew sessions with no meta (orphans): peek them, figure out what they are, ask the captain if unclear.
 4. For meta with no live crew session (dead crewmates): check the recorded `backend=` and `worktree=`, then salvage or report.
+   For `codex-app`, reconcile with `list_threads` and `read_thread` because the visible thread is app-owned.
 5. Run `bin/fm-lock.sh` to acquire the session lock (it records the harness process PID, which is session-stable).
    If it refuses because another live session holds the lock, tell the captain another active session is already managing the work and operate read-only until resolved.
 6. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
@@ -337,7 +340,8 @@ Use `bin/fm-codex-app record-capture <id> <file|->` only as a convenience cache 
 ### Supervise
 
 Covered by section 8.
-Steer a crewmate only with short single lines via `bin/fm-send.sh`; anything long belongs in a file the crewmate can read.
+Steer a crewmate only with short single lines: use `bin/fm-send.sh` for tmux and Orca sessions, and `send_message_to_thread` for Codex App threads.
+Anything long belongs in a file the crewmate can read.
 
 ### Delivery modes and yolo
 
@@ -361,6 +365,8 @@ For example, with claude:
 ```sh
 bin/fm-send.sh fm-<id> '/no-mistakes'
 ```
+
+For Codex App tasks, send the same validation instruction with `send_message_to_thread` instead; `bin/fm-send.sh` intentionally refuses app-owned threads and prints the host-tool action to take.
 
 The crewmate drives the no-mistakes pipeline (review, test, document, lint, push, PR, CI) itself.
 It fixes auto-fix findings on its own.
@@ -449,8 +455,8 @@ Silence is the correct state while a healthy background watcher is waiting.
 ### Stuck-crewmate playbook (escalate in order)
 
 1. Peek the session.
-2. Crewmate is waiting on a question its brief already answers: answer in one line via fm-send.
-3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the task's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh fm-<id> --key Escape`), then redirect with one corrective line.
+2. Crewmate is waiting on a question its brief already answers: answer in one line via `bin/fm-send.sh` for tmux/Orca or `send_message_to_thread` for Codex App.
+3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the task's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh fm-<id> --key Escape` for tmux/Orca; for Codex App, interrupt from Codex Desktop or use `handoff_thread` when moving a running thread), then redirect with one corrective line.
 4. Crewmate is genuinely wedged after redirection: exit the agent with the adapter's exit command, relaunch with the same brief plus a `progress so far` note you append to it.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
