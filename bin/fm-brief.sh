@@ -57,7 +57,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    States: working, needs-decision, blocked, done, failed.
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on and the needs-decision/blocked/done/failed states. No step-by-step
-   FYI progress lines; firstmate reads your pane for that.
+   FYI progress lines; firstmate reads your visible session for that.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
@@ -140,7 +140,7 @@ $RULE1
    Each append wakes firstmate, so report sparingly: only phase changes a supervisor
    would act on (setup done, bug reproduced, fix implemented, validation passed) and the
    needs-decision/blocked/done/failed states. No step-by-step FYI progress lines;
-   firstmate reads your pane for that.
+   firstmate reads your visible session for that.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.

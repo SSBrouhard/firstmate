@@ -34,8 +34,8 @@ There is no app to install; the whole orchestrator is an `AGENTS.md` file that a
 - **One liaison** - you never talk to a worker agent.
   The first mate dispatches, supervises, escalates only real decisions, and reports plain outcomes about work that is ready, blocked, or needs your call.
 - **A visible crew** - every crewmate lives in a visible backend session.
-  Watch any of them work, or type into their window to intervene; the first mate reconciles.
-- **Guarded by construction** - the first mate is read-only over your projects except for clean local default-branch refreshes, safe pruning of local branches whose remote is gone, and approved `local-only` fast-forward merges; crewmates work in disposable [treehouse](https://github.com/kunchenguid/treehouse) worktrees.
+  Watch any of them work, or type into their session to intervene; the first mate reconciles.
+- **Guarded by construction** - the first mate is read-only over your projects except for clean local default-branch refreshes, safe pruning of local branches whose remote is gone, and approved `local-only` fast-forward merges; crewmates work in disposable backend-created worktrees.
   Ship tasks follow each project's delivery mode, and scout tasks produce local reports without pushing anything.
 
 This is not an agent harness. This is not a skill. This is not a CLI.
@@ -82,11 +82,11 @@ cd firstmate && claude
 That is the whole install.
 On first launch the first mate detects what its toolchain is missing (tmux/treehouse by default, Orca CLI when `FM_BACKEND=orca`, or Codex CLI when `FM_BACKEND=codex-app`, plus no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
 
-**Run it inside tmux for the best experience.**
+**Run the default tmux backend inside tmux for the best experience.**
 firstmate works from any terminal - outside tmux, crewmates land in a detached `firstmate` session you can attach to - but launching your harness from inside tmux puts every crewmate window in your own session, one per task, where you can watch the crew work in real time or type into any window to intervene.
 
 **Or use Orca as the visible backend.**
-Set `FM_BACKEND=orca` in the environment, `config/backend`, or `config/backend.env`. In Orca mode, `fm-spawn` creates an Orca-managed worktree and launches the selected agent there, while the rest of firstmate's brief, backlog, status, and delivery protocol stays the same.
+Set `FM_BACKEND=orca` in the environment, `config/backend`, or `config/backend.env`. The environment wins, then `config/backend`, then `config/backend.env`. In Orca mode, `fm-spawn` creates an Orca-managed worktree and launches the selected agent there, while the rest of firstmate's brief, backlog, status, and delivery protocol stays the same.
 
 **Or use Codex App threads as the visible backend.**
 Set `FM_BACKEND=codex-app`. In Codex App mode, `fm-spawn` creates a git worktree under `state/codex-app-worktrees/`, starts a Codex App thread in that worktree, and sends the crewmate brief as the first turn. `fm-peek`, `fm-send`, `fm-watch`, and `fm-teardown` keep working through the same backend interface. This backend runs the Codex harness only; use Orca or tmux for mixed harness fleets.
@@ -109,7 +109,7 @@ Set `FM_BACKEND=codex-app`. In Codex App mode, `fm-spawn` creates a git worktree
  │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼
-  treehouse worktree (clean, disposable, parallel-safe)
+  backend-created worktree (clean, disposable, parallel-safe)
      │
      ├─ ship: project mode ► PR/local merge ► teardown
      │
@@ -119,7 +119,7 @@ Set `FM_BACKEND=codex-app`. In Codex App mode, `fm-spawn` creates a git worktree
 - **Event-driven supervision** - a zero-token bash watcher (`bin/fm-watch.sh`) sleeps on the fleet and wakes the first mate only when a crewmate reports, stalls, a PR merges, or an internal heartbeat review is due.
   Routine watcher polling, restarts, elapsed waiting time, and unchanged heartbeat reviews stay silent; an idle crew costs you nothing.
   A pull-based guard (`bin/fm-guard.sh`) warns through supervision tool output if tasks are in flight and that watcher stops running.
-- **Worktrees, not branches in your checkout** - crewmates never touch your clone; treehouse pools clean worktrees so parallel tasks on one repo cannot collide.
+- **Worktrees, not branches in your checkout** - crewmates never touch your clone; the selected backend creates clean disposable worktrees so parallel tasks on one repo cannot collide.
 - **Two task shapes** - ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
   `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
@@ -148,10 +148,10 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
 | `fm-watch.sh`            | Block until supervision work is due; exits with one reason line                                                     |
 | `fm-send.sh`             | Send one literal line (or `--key Escape`) to a crewmate session                                                     |
-| `fm-peek.sh`             | Print a bounded tail of a crewmate pane                                                                             |
+| `fm-peek.sh`             | Print a bounded tail of a crewmate session                                                                          |
 | `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
-| `fm-teardown.sh`         | Return the worktree and kill the window; protects ship work and requires scout reports                              |
+| `fm-teardown.sh`         | Remove or return the worktree and close the backend session; protects ship work and requires scout reports          |
 | `fm-harness.sh`          | Detect the running harness; resolve the effective crewmate harness                                                  |
 | `fm-lock.sh`             | Single-firstmate session lock                                                                                       |
 
@@ -175,6 +175,10 @@ FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effo
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_BACKEND=tmux          # visible crew backend: tmux (default), orca, or codex-app
 FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|codex-app status: active'   # busy signatures
+FM_CODEX_APP_CODEX_BIN=codex       # codex binary used by the codex-app backend
+FM_CODEX_APP_TIMEOUT_MS=60000      # app-server request timeout for codex-app operations
+FM_ORCA_CODEX_CONFIG="$HOME/Library/Application Support/orca/codex-runtime-home/home/config.toml"
+# FM_CODEX_APP_DEBUG=1             # optional: mirror codex app-server stderr
 ```
 
 ## Development

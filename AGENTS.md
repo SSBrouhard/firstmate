@@ -23,7 +23,7 @@ Hard rules, in priority order:
    You must not edit, commit to, or run state-changing commands in anything under `projects/` or in any worktree.
    You read projects to understand them; crewmates change them.
    Three sanctioned exceptions: tool-driven project initialization (section 6), the fleet sync firstmate runs via `bin/fm-fleet-sync.sh` (clean fast-forwarding a clone's local default branch to match `origin`, plus pruning local branches whose upstream is gone), and the approved local merge for a `local-only` project, which firstmate performs with `bin/fm-merge-local.sh` once the captain approves (section 7).
-   The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a treehouse worktree, so it cannot discard unlanded work.
+   The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a backend-created worktree, so it cannot discard unlanded work.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/` and has crewmates update project `AGENTS.md` through normal worktree delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
    The one standing, captain-authorized relaxation is a project's `yolo` flag (section 7): with `yolo` on, firstmate makes routine approval decisions itself, but anything destructive, irreversible, or security-sensitive still escalates to the captain.
@@ -33,7 +33,7 @@ Hard rules, in priority order:
    The scout carve-out: a scout task's worktree is declared scratch from the start - its deliverable is the report, and teardown lets the worktree go once that report exists (section 7).
 4. **Crewmates never address the captain.**
    All crewmate communication flows through you.
-   The captain may watch or type into any crewmate window directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
+   The captain may watch or type into any crewmate's visible session directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
 5. Report outcomes faithfully.
    If work failed, say so plainly with the evidence.
 
@@ -122,7 +122,7 @@ Each adapter splits into mechanics and knowledge.
 The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks) lives in the tables below.
 **Never dispatch a crewmate on an unverified adapter.**
 If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
-If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in fm-watch's `FM_BUSY_REGEX` default, and the knowledge here, and commit.
+If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch on the tmux backend, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in fm-watch's `FM_BUSY_REGEX` default, and the knowledge here, and commit.
 
 ### Detecting harnesses
 
@@ -134,19 +134,19 @@ When you verify a new adapter, record its env marker and command name in that sc
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `esc to interrupt` |
+| Busy signature | `esc to interrupt` |
 | Exit command | `/exit` |
 | Interrupt | single Escape |
 | Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
 
 First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
-After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh <window> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
+After every spawn, peek the visible session within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
 
 ### codex (VERIFIED 2026-06-11, codex-cli 0.139.0)
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `esc to interrupt` (shown as `• Working (Xs • esc to interrupt)`) |
+| Busy signature | `esc to interrupt` (shown as `• Working (Xs • esc to interrupt)`) |
 | Exit command | `/quit` (slash popup needs ~1s between text and Enter; fm-send handles it) |
 | Interrupt | single Escape |
 | Skill invocation | `$<skill>` (e.g. `$no-mistakes`); `/<skill>` is claude-only and codex rejects it as "Unrecognized command" |
@@ -158,19 +158,19 @@ Resume after exit: `codex resume <session-id>` (printed on quit).
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `esc interrupt` (dotted spinner footer; note: no "to") |
+| Busy signature | `esc interrupt` (dotted spinner footer; note: no "to") |
 | Exit command | `/exit` |
-| Interrupt | double Escape; known flaky while a long shell command runs - a wedged pane may need `/exit` and relaunch |
+| Interrupt | double Escape; known flaky while a long shell command runs - a wedged session may need `/exit` and relaunch |
 
 No trust dialog.
 Caution: opencode auto-upgrades itself in the background and the running TUI can exit mid-task (observed live: 1.15.7 -> 1.17.3).
-If a pane shows the exit banner, relaunch with `--continue` to resume the session - but `--prompt` does NOT auto-submit alongside `--continue`; send the next instruction via fm-send once the TUI is up.
+If a session shows the exit banner, relaunch with `--continue` to resume the session - but `--prompt` does NOT auto-submit alongside `--continue`; send the next instruction via fm-send once the TUI is up.
 
 ### pi (VERIFIED 2026-06-11)
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `Working...` (braille spinner prefix; no "esc to interrupt" text) |
+| Busy signature | `Working...` (braille spinner prefix; no "esc to interrupt" text) |
 | Exit command | `/quit` |
 | Interrupt | single Escape |
 
@@ -310,7 +310,7 @@ The script resolves the harness (`fm-harness.sh crew`), owns the verified launch
 
 The script creates the visible crew session through the configured backend. In tmux mode it creates a tmux window, runs `treehouse get`, waits for the worktree subshell, installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief. In Orca mode it creates an Orca-managed worktree and launches the agent with the brief, recording the Orca worktree id and terminal handle in meta. In Codex App mode it creates a git worktree under `state/codex-app-worktrees/`, starts a Codex App thread in that worktree, and sends the brief as the first turn, recording the thread id in meta.
 Worktrees start from a clean default-branch base. The exact attachment is backend-specific: tmux/treehouse may use detached HEAD, Orca creates an attached task branch, and Codex App creates a detached git worktree before the brief tells the crewmate to create `fm/<id>`. Ship briefs tell the crewmate to create or reset its `fm/<id>` branch, while scout briefs keep the worktree scratch.
-After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
+After spawning, peek the visible session to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
 Add the task to `data/backlog.md` under In flight.
 
 ### Supervise
@@ -397,9 +397,9 @@ On wake, in order of cheapness:
 
 1. Read the reason line.
 2. `signal:` read the listed status files first; a wake lists every signal that landed within the coalescing grace window (e.g. a status write plus the same turn's turn-end marker), and each is ~30 tokens and usually sufficient.
-3. `stale:` the crewmate stopped without reporting; peek the pane (`bin/fm-peek.sh <window>`) to diagnose.
+3. `stale:` the crewmate stopped without reporting; peek the session (`bin/fm-peek.sh fm-<id>`) to diagnose.
 4. `check:` a per-task poll fired (usually a merge); act on it.
-5. `heartbeat:` review the whole fleet: skim each window's status file, peek panes that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then restart the watcher.
+5. `heartbeat:` review the whole fleet: skim each task's status file, peek sessions that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then restart the watcher.
    A heartbeat with no captain-relevant change is internal; do not report that the fleet is unchanged.
 
 Heartbeats back off exponentially while they are the only wakes firing (600s doubling to a 2h cap - an idle fleet stops burning turns); any signal, stale, or check wake resets the cadence to the base interval.
@@ -420,15 +420,15 @@ Whenever one or more tasks are in flight, do not run long foreground-blocking op
 This includes your own no-mistakes pipeline, long builds, and any other multi-minute command.
 Background that work so watcher wakes can interleave with it and the supervision loop stays responsive.
 
-Token discipline: status files before panes; default peeks to 40 lines; never stream a pane repeatedly through yourself; batch what you tell the captain.
-The context-% shown in a peek is not actionable as crew health; ignore it and intervene only on real signals (`signal`, `stale`, `needs-decision`, `blocked`), looping or confusion in the pane, or a question the brief already answers.
+Token discipline: status files before session peeks; default peeks to 40 lines; never stream a session repeatedly through yourself; batch what you tell the captain.
+The context-% shown in a peek is not actionable as crew health; ignore it and intervene only on real signals (`signal`, `stale`, `needs-decision`, `blocked`), looping or confusion in the session, or a question the brief already answers.
 Silence is the correct state while a healthy background watcher is waiting.
 
 ### Stuck-crewmate playbook (escalate in order)
 
-1. Peek the pane.
+1. Peek the session.
 2. Crewmate is waiting on a question its brief already answers: answer in one line via fm-send.
-3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the window's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh <window> --key Escape`), then redirect with one corrective line.
+3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the task's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh fm-<id> --key Escape`), then redirect with one corrective line.
 4. Crewmate is genuinely wedged after redirection: exit the agent with the adapter's exit command, relaunch with the same brief plus a `progress so far` note you append to it.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
