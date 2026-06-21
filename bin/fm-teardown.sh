@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Tear down a finished task: return the treehouse worktree, kill the tmux window,
-# clear volatile state, then refresh/prune the project's clone for PR-based ship tasks.
-# REFUSES if the worktree holds work not on any remote, because treehouse return
-# hard-resets the worktree and kills its processes.
+# Tear down a finished task: close the backend session, remove/return the
+# worktree, clear volatile state, then refresh/prune the project's clone for
+# PR-based ship tasks.
+# REFUSES if the worktree holds work not on any remote, because teardown removes
+# the disposable worktree and kills/archives its backend session.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product - teardown proceeds once the report exists, and refuses without it.
@@ -28,6 +29,8 @@ BACKEND=$(grep '^backend=' "$META" | cut -d= -f2- || true)
 [ -n "$BACKEND" ] || BACKEND=tmux
 ORCA_WORKTREE_ID=$(grep '^orca_worktree_id=' "$META" | cut -d= -f2- || true)
 ORCA_TERMINAL=$(grep '^terminal=' "$META" | cut -d= -f2- || true)
+CODEX_APP_THREAD_ID=$(grep '^thread_id=' "$META" | cut -d= -f2- || true)
+CODEX_APP_RUNNER_PID=$(grep '^codex_app_runner_pid=' "$META" | cut -d= -f2- || true)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -114,6 +117,15 @@ if [ -d "$WT" ]; then
         orca worktree rm --worktree "path:$WT" --force --json >/dev/null
       fi
       ;;
+    codex-app)
+      if [ -n "$CODEX_APP_RUNNER_PID" ] && kill -0 "$CODEX_APP_RUNNER_PID" 2>/dev/null; then
+        kill "$CODEX_APP_RUNNER_PID" 2>/dev/null || true
+      fi
+      if [ -n "$CODEX_APP_THREAD_ID" ]; then
+        "$FM_ROOT/bin/fm-codex-app" archive "$CODEX_APP_THREAD_ID" >/dev/null 2>&1 || true
+      fi
+      git -C "$PROJ" worktree remove --force "$WT" >/dev/null
+      ;;
     *) echo "REFUSED: unknown backend '$BACKEND' for task $ID." >&2; exit 1 ;;
   esac
 fi
@@ -121,7 +133,8 @@ fi
 if [ "$BACKEND" = tmux ]; then
   tmux kill-window -t "$T" 2>/dev/null || true
 fi
-rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta" "$STATE/$ID.pi-ext.ts"
+rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta" "$STATE/$ID.pi-ext.ts" \
+  "$STATE/$ID.codex-app.env" "$STATE/$ID.codex-app.log" "$STATE/$ID.codex-app-send."*
 if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

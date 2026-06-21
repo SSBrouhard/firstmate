@@ -14,7 +14,8 @@
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 # Per-harness turn-end hooks are installed automatically; some live outside the worktree.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout> mode=<mode> yolo=<on|off> window=<session:window> worktree=<path>
+# On success prints: spawned <id> backend=<name> harness=<name> kind=<ship|scout>
+# mode=<mode> yolo=<on|off> window=<handle> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md via fm-project-mode.sh.
 set -eu
 
@@ -75,8 +76,33 @@ T=""
 WT=""
 ORCA_WORKTREE_ID=""
 ORCA_TERMINAL=""
+CODEX_APP_THREAD_ID=""
+CODEX_APP_TURN_ID=""
+CODEX_APP_RUNNER_PID=""
+CODEX_APP_STATE="$FM_ROOT/state/$ID.codex-app.env"
+CODEX_APP_LOG="$FM_ROOT/state/$ID.codex-app.log"
 TURNEND="$FM_ROOT/state/$ID.turn-ended"
 PIEXT="$FM_ROOT/state/$ID.pi-ext.ts"
+
+git_worktree_base() {
+  local repo=$1 ref branch
+  ref=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$ref" ]; then
+    echo "$ref"
+    return 0
+  fi
+  for branch in main master; do
+    if git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      echo "origin/$branch"
+      return 0
+    fi
+    if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+      echo "$branch"
+      return 0
+    fi
+  done
+  git -C "$repo" rev-parse --verify HEAD 2>/dev/null
+}
 
 case "$BACKEND" in
   tmux)
@@ -134,7 +160,23 @@ EOF
     [ -n "$WT" ] || { echo "error: Orca did not return a worktree path" >&2; exit 1; }
     T="$W"
     ;;
-  *) echo "error: unknown FM_BACKEND '$BACKEND' (expected tmux or orca)" >&2; exit 1 ;;
+  codex-app)
+    command -v codex >/dev/null || { echo "error: FM_BACKEND=codex-app but codex is not installed" >&2; exit 1; }
+    case "$ARG3" in
+      *' '*) echo "error: FM_BACKEND=codex-app does not support raw launch commands; use the codex harness" >&2; exit 1 ;;
+    esac
+    case "$HARNESS" in
+      codex*) ;;
+      *) echo "error: FM_BACKEND=codex-app supports only the codex harness (got '$HARNESS')" >&2; exit 1 ;;
+    esac
+    WT="$FM_ROOT/state/codex-app-worktrees/$ID"
+    [ ! -e "$WT" ] || { echo "error: Codex App worktree already exists at $WT" >&2; exit 1; }
+    mkdir -p "$(dirname "$WT")"
+    BASE=$(git_worktree_base "$PROJ_ABS") || { echo "error: cannot determine git base for $PROJ_ABS" >&2; exit 1; }
+    git -C "$PROJ_ABS" worktree add --detach "$WT" "$BASE" >/dev/null
+    T="$W"
+    ;;
+  *) echo "error: unknown FM_BACKEND '$BACKEND' (expected tmux, orca, or codex-app)" >&2; exit 1 ;;
 esac
 
 # Per-harness turn-end hook: a file that touches state/<id>.turn-ended when the
@@ -231,6 +273,27 @@ EOF
   esac
 fi
 
+if [ "$BACKEND" = codex-app ]; then
+  mkdir -p "$FM_ROOT/state"
+  rm -f "$CODEX_APP_STATE" "$CODEX_APP_LOG"
+  "$FM_ROOT/bin/fm-codex-app" run-start "$WT" "$BRIEF" "$W" "$CODEX_APP_STATE" "$TURNEND" >>"$CODEX_APP_LOG" 2>&1 &
+  CODEX_APP_RUNNER_PID=$!
+  for _ in $(seq 1 120); do
+    if [ -s "$CODEX_APP_STATE" ]; then
+      CODEX_APP_THREAD_ID=$(awk -F= '$1=="thread_id"{print $2; exit}' "$CODEX_APP_STATE")
+      CODEX_APP_TURN_ID=$(awk -F= '$1=="turn_id"{print $2; exit}' "$CODEX_APP_STATE")
+      [ -n "$CODEX_APP_THREAD_ID" ] && break
+    fi
+    if ! kill -0 "$CODEX_APP_RUNNER_PID" 2>/dev/null; then
+      cat "$CODEX_APP_LOG" >&2 2>/dev/null || true
+      echo "error: Codex App runner exited before returning a thread id" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+  [ -n "$CODEX_APP_THREAD_ID" ] || { cat "$CODEX_APP_LOG" >&2 2>/dev/null || true; echo "error: Codex App did not return a thread id" >&2; exit 1; }
+fi
+
 # Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
 # Recorded in meta so fm-teardown's safety check and the validate/merge stages can
 # branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
@@ -252,6 +315,11 @@ mkdir -p "$FM_ROOT/state"
   echo "yolo=$YOLO"
   [ -n "$ORCA_WORKTREE_ID" ] && echo "orca_worktree_id=$ORCA_WORKTREE_ID"
   [ -n "$ORCA_TERMINAL" ] && echo "terminal=$ORCA_TERMINAL"
+  [ -n "$CODEX_APP_THREAD_ID" ] && echo "thread_id=$CODEX_APP_THREAD_ID"
+  [ -n "$CODEX_APP_TURN_ID" ] && echo "turn_id=$CODEX_APP_TURN_ID"
+  [ -n "$CODEX_APP_RUNNER_PID" ] && echo "codex_app_runner_pid=$CODEX_APP_RUNNER_PID"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_state=$CODEX_APP_STATE"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_log=$CODEX_APP_LOG"
 } > "$FM_ROOT/state/$ID.meta"
 
 if [ "$BACKEND" = tmux ]; then

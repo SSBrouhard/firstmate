@@ -1,0 +1,430 @@
+#!/usr/bin/env node
+// Tiny Codex App app-server client for Firstmate's codex-app backend.
+// It intentionally stays dependency-free: newline-delimited JSON over stdio.
+
+const fs = require("node:fs");
+const { spawn } = require("node:child_process");
+
+const TIMEOUT_MS = Number(process.env.FM_CODEX_APP_TIMEOUT_MS || 60000);
+
+function usage() {
+  console.error(`usage:
+  fm-codex-app start <worktree> <brief-file> <thread-name>
+  fm-codex-app run-start <worktree> <brief-file> <thread-name> <state-file> <turnend-file>
+  fm-codex-app run-send <thread-id> <text-file> <state-file> <turnend-file>
+  fm-codex-app capture <thread-id> [lines]
+  fm-codex-app send <thread-id> <text>
+  fm-codex-app interrupt <thread-id>
+  fm-codex-app archive <thread-id>
+  fm-codex-app status <thread-id>`);
+  process.exit(2);
+}
+
+class CodexAppClient {
+  constructor() {
+    const bin = process.env.FM_CODEX_APP_CODEX_BIN || "codex";
+    this.child = spawn(bin, ["app-server", "--stdio", "--enable", "remote_control"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.nextId = 1;
+    this.pending = new Map();
+    this.notificationWaiters = new Set();
+    this.buffer = "";
+    this.stderr = "";
+
+    this.child.stdout.setEncoding("utf8");
+    this.child.stdout.on("data", (chunk) => this.onStdout(chunk));
+    this.child.stderr.setEncoding("utf8");
+    this.child.stderr.on("data", (chunk) => {
+      this.stderr += chunk;
+      if (process.env.FM_CODEX_APP_DEBUG) process.stderr.write(chunk);
+    });
+    this.child.on("exit", () => {
+      for (const { reject, timer, method } of this.pending.values()) {
+        clearTimeout(timer);
+        reject(new Error(`app-server exited while waiting for ${method}`));
+      }
+      this.pending.clear();
+    });
+  }
+
+  onStdout(chunk) {
+    this.buffer += chunk;
+    let idx;
+    while ((idx = this.buffer.indexOf("\n")) !== -1) {
+      const raw = this.buffer.slice(0, idx);
+      this.buffer = this.buffer.slice(idx + 1);
+      if (!raw.trim()) continue;
+      let msg;
+      try {
+        msg = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (msg.method) {
+        for (const waiter of this.notificationWaiters) waiter(msg);
+      }
+      if (!Object.prototype.hasOwnProperty.call(msg, "id")) continue;
+      const pending = this.pending.get(msg.id);
+      if (!pending) continue;
+      this.pending.delete(msg.id);
+      clearTimeout(pending.timer);
+      if (msg.error) {
+        pending.reject(new Error(`${pending.method}: ${JSON.stringify(msg.error)}`));
+      } else {
+        pending.resolve(msg.result);
+      }
+    }
+  }
+
+  onNotification(fn) {
+    this.notificationWaiters.add(fn);
+    return () => this.notificationWaiters.delete(fn);
+  }
+
+  request(method, params) {
+    const id = this.nextId++;
+    const payload = params === undefined ? { id, method } : { id, method, params };
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} timed out after ${TIMEOUT_MS}ms`));
+      }, TIMEOUT_MS);
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer, method });
+      this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    });
+  }
+
+  notify(method, params) {
+    const payload = params === undefined ? { method } : { method, params };
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+  }
+
+  async init() {
+    await this.request("initialize", {
+      clientInfo: { name: "firstmate", title: "Firstmate", version: "0.0.0" },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    });
+    this.notify("initialized");
+  }
+
+  async close() {
+    if (this.child.exitCode !== null) return;
+    this.child.stdin.end();
+    await new Promise((resolve) => {
+      const killTimer = setTimeout(() => {
+        this.child.kill();
+        resolve();
+      }, 500);
+      killTimer.unref();
+      this.child.once("exit", () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
+    });
+  }
+}
+
+function textInput(text) {
+  return [{ type: "text", text, text_elements: [] }];
+}
+
+function activeTurn(thread) {
+  return (thread.turns || []).find((turn) => turn.status === "inProgress") || null;
+}
+
+function userText(content) {
+  return (content || [])
+    .map((item) => {
+      if (item.type === "text") return item.text;
+      if (item.type === "image") return `[image: ${item.url}]`;
+      if (item.type === "localImage") return `[image: ${item.path}]`;
+      if (item.type === "skill") return `[skill: ${item.name}]`;
+      if (item.type === "mention") return `[mention: ${item.name}]`;
+      return `[${item.type}]`;
+    })
+    .join("");
+}
+
+function lastLines(text, limit) {
+  const lines = String(text || "").split(/\r?\n/);
+  return lines.slice(Math.max(0, lines.length - limit)).join("\n");
+}
+
+function itemLines(item) {
+  switch (item.type) {
+    case "userMessage":
+      return [`user: ${userText(item.content)}`];
+    case "agentMessage":
+      return [`assistant: ${item.text}`];
+    case "plan":
+      return [`plan: ${item.text}`];
+    case "reasoning":
+      return (item.summary || []).map((line) => `reasoning: ${line}`);
+    case "commandExecution": {
+      const lines = [`$ ${item.command}`];
+      if (item.aggregatedOutput) lines.push(lastLines(item.aggregatedOutput, 12));
+      if (item.status) lines.push(`command: ${item.status}${item.exitCode == null ? "" : ` (${item.exitCode})`}`);
+      return lines;
+    }
+    case "fileChange":
+      return [`fileChange: ${item.status} ${item.changes ? item.changes.length : 0} change(s)`];
+    case "mcpToolCall":
+      return [`tool: ${item.server}.${item.tool} ${item.status}`];
+    case "dynamicToolCall":
+      return [`tool: ${item.namespace ? `${item.namespace}.` : ""}${item.tool} ${item.status}`];
+    case "webSearch":
+      return [`webSearch: ${item.query}`];
+    case "imageView":
+      return [`imageView: ${item.path}`];
+    case "imageGeneration":
+      return [`imageGeneration: ${item.status}`];
+    case "contextCompaction":
+      return ["contextCompaction"];
+    default:
+      return [`${item.type}`];
+  }
+}
+
+function renderThread(thread, lineLimit) {
+  const lines = [];
+  const active = activeTurn(thread);
+  const status = active ? "active" : thread.status?.type || "unknown";
+  lines.push(`codex-app thread: ${thread.id}`);
+  lines.push(`codex-app status: ${status}`);
+  for (const turn of thread.turns || []) {
+    lines.push(`turn ${turn.id}: ${turn.status}`);
+    for (const item of turn.items || []) lines.push(...itemLines(item));
+  }
+  lines.push(`codex-app status: ${status}`);
+  return lines.slice(Math.max(0, lines.length - lineLimit)).join("\n");
+}
+
+function writeStateFile(file, values) {
+  const content = Object.entries(values)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  fs.writeFileSync(file, `${content}\n`);
+}
+
+function touch(file) {
+  fs.closeSync(fs.openSync(file, "a"));
+  const now = new Date();
+  fs.utimesSync(file, now, now);
+}
+
+async function waitForTurn(client, threadId, turnId) {
+  let done = false;
+  let status = "unknown";
+  const unlisten = client.onNotification((msg) => {
+    if (msg.method !== "turn/completed") return;
+    if (msg.params?.threadId !== threadId) return;
+    if (msg.params?.turn?.id !== turnId) return;
+    status = msg.params.turn.status || "completed";
+    done = true;
+  });
+  try {
+    while (!done) {
+      const result = await client.request("thread/read", { threadId, includeTurns: true });
+      const turn = (result.thread.turns || []).find((candidate) => candidate.id === turnId);
+      if (turn && turn.status !== "inProgress") {
+        status = turn.status;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } finally {
+    unlisten();
+  }
+  return status;
+}
+
+async function startTurn(client, worktree, prompt) {
+  return client.request("turn/start", {
+    threadId: worktree.threadId,
+    input: textInput(prompt),
+    cwd: worktree.cwd,
+    runtimeWorkspaceRoots: [worktree.cwd],
+    approvalPolicy: "never",
+    sandboxPolicy: { type: "dangerFullAccess" },
+  });
+}
+
+async function resumeThread(client, threadId) {
+  const resumed = await client.request("thread/resume", {
+    threadId,
+    approvalPolicy: "never",
+    approvalsReviewer: "user",
+    sandbox: "danger-full-access",
+  });
+  return resumed.thread;
+}
+
+async function withClient(fn) {
+  const client = new CodexAppClient();
+  try {
+    await client.init();
+    await fn(client);
+  } finally {
+    await client.close();
+  }
+}
+
+async function main() {
+  const [cmd, ...args] = process.argv.slice(2);
+  if (!cmd) usage();
+
+  if (cmd === "start") {
+    const [worktree, briefFile, threadName] = args;
+    if (!worktree || !briefFile || !threadName) usage();
+    const prompt = fs.readFileSync(briefFile, "utf8");
+    await withClient(async (client) => {
+      const started = await client.request("thread/start", {
+        cwd: worktree,
+        runtimeWorkspaceRoots: [worktree],
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: "danger-full-access",
+        threadSource: "firstmate",
+      });
+      const threadId = started.thread.id;
+      await client.request("thread/name/set", { threadId, name: threadName });
+      const turn = await startTurn(client, { threadId, cwd: worktree }, prompt);
+      console.log(`thread_id=${threadId}`);
+      console.log(`turn_id=${turn.turn.id}`);
+      const status = await waitForTurn(client, threadId, turn.turn.id);
+      console.log(`turn_status=${status}`);
+    });
+    return;
+  }
+
+  if (cmd === "run-start") {
+    const [worktree, briefFile, threadName, stateFile, turnendFile] = args;
+    if (!worktree || !briefFile || !threadName || !stateFile || !turnendFile) usage();
+    const prompt = fs.readFileSync(briefFile, "utf8");
+    await withClient(async (client) => {
+      const started = await client.request("thread/start", {
+        cwd: worktree,
+        runtimeWorkspaceRoots: [worktree],
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: "danger-full-access",
+        threadSource: "firstmate",
+      });
+      const threadId = started.thread.id;
+      await client.request("thread/name/set", { threadId, name: threadName });
+      const turn = await startTurn(client, { threadId, cwd: worktree }, prompt);
+      writeStateFile(stateFile, { thread_id: threadId, turn_id: turn.turn.id, runner_pid: process.pid });
+      const status = await waitForTurn(client, threadId, turn.turn.id);
+      writeStateFile(stateFile, { thread_id: threadId, turn_id: turn.turn.id, runner_pid: process.pid, last_turn_status: status });
+      touch(turnendFile);
+    });
+    return;
+  }
+
+  if (cmd === "run-send") {
+    const [threadId, textFile, stateFile, turnendFile] = args;
+    if (!threadId || !textFile || !stateFile || !turnendFile) usage();
+    const text = fs.readFileSync(textFile, "utf8");
+    await withClient(async (client) => {
+      const thread = await resumeThread(client, threadId);
+      const active = activeTurn(thread);
+      let turnId;
+      if (active) {
+        await client.request("turn/steer", { threadId, expectedTurnId: active.id, input: textInput(text) });
+        turnId = active.id;
+      } else {
+        const started = await client.request("turn/start", { threadId, input: textInput(text) });
+        turnId = started.turn.id;
+      }
+      writeStateFile(stateFile, { thread_id: threadId, turn_id: turnId, runner_pid: process.pid });
+      const status = await waitForTurn(client, threadId, turnId);
+      writeStateFile(stateFile, { thread_id: threadId, turn_id: turnId, runner_pid: process.pid, last_turn_status: status });
+      touch(turnendFile);
+    });
+    try {
+      fs.unlinkSync(textFile);
+    } catch {}
+    return;
+  }
+
+  if (cmd === "capture") {
+    const [threadId, linesArg] = args;
+    if (!threadId) usage();
+    const lines = Number(linesArg || 40);
+    await withClient(async (client) => {
+      const result = await client.request("thread/read", { threadId, includeTurns: true });
+      console.log(renderThread(result.thread, Number.isFinite(lines) && lines > 0 ? lines : 40));
+    });
+    return;
+  }
+
+  if (cmd === "send") {
+    const [threadId, ...textParts] = args;
+    const text = textParts.join(" ");
+    if (!threadId || !text) usage();
+    await withClient(async (client) => {
+      const thread = await resumeThread(client, threadId);
+      const turn = activeTurn(thread);
+      if (turn) {
+        await client.request("turn/steer", { threadId, expectedTurnId: turn.id, input: textInput(text) });
+        console.log(`steered_turn_id=${turn.id}`);
+        const status = await waitForTurn(client, threadId, turn.id);
+        console.log(`turn_status=${status}`);
+      } else {
+        const started = await client.request("turn/start", { threadId, input: textInput(text) });
+        console.log(`turn_id=${started.turn.id}`);
+        const status = await waitForTurn(client, threadId, started.turn.id);
+        console.log(`turn_status=${status}`);
+      }
+    });
+    return;
+  }
+
+  if (cmd === "interrupt") {
+    const [threadId] = args;
+    if (!threadId) usage();
+    await withClient(async (client) => {
+      const thread = await resumeThread(client, threadId);
+      const turn = activeTurn(thread);
+      if (!turn) {
+        console.log("no_active_turn=1");
+        return;
+      }
+      await client.request("turn/interrupt", { threadId, turnId: turn.id });
+      console.log(`interrupted_turn_id=${turn.id}`);
+    });
+    return;
+  }
+
+  if (cmd === "archive") {
+    const [threadId] = args;
+    if (!threadId) usage();
+    await withClient(async (client) => {
+      await client.request("thread/archive", { threadId });
+      console.log(`archived_thread_id=${threadId}`);
+    });
+    return;
+  }
+
+  if (cmd === "status") {
+    const [threadId] = args;
+    if (!threadId) usage();
+    await withClient(async (client) => {
+      const result = await client.request("thread/read", { threadId, includeTurns: true });
+      const turn = activeTurn(result.thread);
+      console.log(`status=${turn ? "active" : result.thread.status?.type || "unknown"}`);
+      if (turn) console.log(`turn_id=${turn.id}`);
+    });
+    return;
+  }
+
+  usage();
+}
+
+main().catch((error) => {
+  console.error(`error: ${error.message}`);
+  process.exit(1);
+});

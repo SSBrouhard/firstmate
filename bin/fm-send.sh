@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Send one line of literal text to a crewmate window, then Enter.
-# Usage: fm-send.sh <window> <text...>
-#   <window> may be a bare window name (fm-xyz) or session:window.
-# Special keys instead of text: fm-send.sh <window> --key Escape   (or Enter, C-c, ...)
+# Send one line of literal text to a crewmate backend session.
+# Usage: fm-send.sh <selector> <text...>
+#   <selector> may be fm-xyz, a tmux session:window, or a backend thread id.
+# Special keys instead of text: fm-send.sh <selector> --key Escape   (or Enter, C-c, ...)
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -68,7 +68,7 @@ $ claude   # launch your agent harness here; AGENTS.md takes over
 ```sh
 # 1. a verified agent harness - claude, codex, opencode, or pi
 # 2. git + GitHub auth
-# 3. tmux by default, or Orca CLI when FM_BACKEND=orca
+# 3. tmux by default, Orca CLI when FM_BACKEND=orca, or Codex CLI when FM_BACKEND=codex-app
 gh auth login
 ```
 
@@ -80,13 +80,16 @@ cd firstmate && claude
 ```
 
 That is the whole install.
-On first launch the first mate detects what its toolchain is missing (tmux/treehouse by default, or Orca CLI when `FM_BACKEND=orca`, plus no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
+On first launch the first mate detects what its toolchain is missing (tmux/treehouse by default, Orca CLI when `FM_BACKEND=orca`, or Codex CLI when `FM_BACKEND=codex-app`, plus no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
 
 **Run it inside tmux for the best experience.**
 firstmate works from any terminal - outside tmux, crewmates land in a detached `firstmate` session you can attach to - but launching your harness from inside tmux puts every crewmate window in your own session, one per task, where you can watch the crew work in real time or type into any window to intervene.
 
 **Or use Orca as the visible backend.**
 Set `FM_BACKEND=orca` in the environment, `config/backend`, or `config/backend.env`. In Orca mode, `fm-spawn` creates an Orca-managed worktree and launches the selected agent there, while the rest of firstmate's brief, backlog, status, and delivery protocol stays the same.
+
+**Or use Codex App threads as the visible backend.**
+Set `FM_BACKEND=codex-app`. In Codex App mode, `fm-spawn` creates a git worktree under `state/codex-app-worktrees/`, starts a Codex App thread in that worktree, and sends the crewmate brief as the first turn. `fm-peek`, `fm-send`, `fm-watch`, and `fm-teardown` keep working through the same backend interface. This backend runs the Codex harness only; use Orca or tmux for mixed harness fleets.
 
 ## How It Works
 
@@ -137,7 +140,8 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-brief.sh`            | Scaffold a ship brief, or a report-only scout brief with `--scout`                                                  |
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but the watcher liveness beacon is stale or missing                                   |
-| `fm-backend.sh`          | Shared backend helpers for tmux and Orca runtime operations                                                        |
+| `fm-backend.sh`          | Shared backend helpers for tmux, Orca, and Codex App runtime operations                                            |
+| `fm-codex-app`           | Dependency-free Codex App app-server client used by the `codex-app` backend                                       |
 | `fm-spawn.sh`            | Backend session → isolated worktree → agent launched with its brief; records ship/scout task kind                  |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`                                          |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval                                           |
@@ -169,8 +173,8 @@ FM_GUARD_GRACE=300      # seconds a stale watcher beacon may age before guard wa
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effort clone refresh
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
-FM_BACKEND=tmux          # visible crew backend: tmux (default) or orca
-FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.'   # busy-pane signatures, extend per harness
+FM_BACKEND=tmux          # visible crew backend: tmux (default), orca, or codex-app
+FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|codex-app status: active'   # busy signatures
 ```
 
 ## Development

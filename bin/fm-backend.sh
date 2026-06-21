@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Backend helpers for firstmate's visible crew runtime.
-# Default backend is tmux. Set FM_BACKEND=orca or config/backend(.env) to use Orca.
+# Default backend is tmux. Set FM_BACKEND=orca or codex-app via
+# config/backend(.env) to use another visible crew backend.
 
 fm_backend_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
@@ -113,7 +114,7 @@ NODE
 }
 
 fm_backend_meta_for_selector() {
-  local selector=$1 root=${FM_ROOT:-$(fm_backend_root)} state meta base win
+  local selector=$1 root=${FM_ROOT:-$(fm_backend_root)} state meta base win thread_id
   state="$root/state"
   base=${selector#fm-}
   if [ -f "$state/$base.meta" ]; then
@@ -123,8 +124,10 @@ fm_backend_meta_for_selector() {
   for meta in "$state"/*.meta; do
     [ -e "$meta" ] || continue
     win=$(fm_meta_get window "$meta")
+    thread_id=$(fm_meta_get thread_id "$meta")
     case "$selector" in
       "$win"|fm-"$(basename "$meta" .meta)") echo "$meta"; return 0 ;;
+      "$thread_id") echo "$meta"; return 0 ;;
       *) case "$win" in *:"$selector"|"$selector") echo "$meta"; return 0 ;; esac ;;
     esac
   done
@@ -140,7 +143,7 @@ fm_backend_tmux_resolve() {
 }
 
 fm_backend_capture() {
-  local meta=$1 lines=${2:-40} backend target terminal
+  local meta=$1 lines=${2:-40} backend target terminal thread_id
   backend=$(fm_meta_get backend "$meta")
   [ -n "$backend" ] || backend=tmux
   case "$backend" in
@@ -163,6 +166,11 @@ if (r.terminal && Array.isArray(r.terminal.tail)) {
 }
 '
       ;;
+    codex-app)
+      thread_id=$(fm_meta_get thread_id "$meta")
+      [ -n "$thread_id" ] || { echo "error: no thread_id= in $meta" >&2; return 1; }
+      "${FM_ROOT:-$(fm_backend_root)}/bin/fm-codex-app" capture "$thread_id" "$lines"
+      ;;
     *) echo "error: unknown backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -183,7 +191,7 @@ if (r.terminal && Array.isArray(r.terminal.tail)) {
 }
 
 fm_backend_send_text() {
-  local meta=$1 text=$2 backend target terminal
+  local meta=$1 text=$2 backend target terminal thread_id root state task send_file state_file log_file turnend
   backend=$(fm_meta_get backend "$meta")
   [ -n "$backend" ] || backend=tmux
   case "$backend" in
@@ -198,12 +206,28 @@ fm_backend_send_text() {
       [ -n "$terminal" ] || { echo "error: no terminal= in $meta" >&2; return 1; }
       orca terminal send --terminal "$terminal" --text "$text" --enter --json >/dev/null
       ;;
+    codex-app)
+      root=${FM_ROOT:-$(fm_backend_root)}
+      thread_id=$(fm_meta_get thread_id "$meta")
+      [ -n "$thread_id" ] || { echo "error: no thread_id= in $meta" >&2; return 1; }
+      state="$root/state"
+      task=$(basename "$meta" .meta)
+      mkdir -p "$state"
+      send_file=$(mktemp "$state/$task.codex-app-send.XXXXXX")
+      printf '%s' "$text" > "$send_file"
+      state_file=$(fm_meta_get codex_app_state "$meta")
+      [ -n "$state_file" ] || state_file="$state/$task.codex-app.env"
+      log_file=$(fm_meta_get codex_app_log "$meta")
+      [ -n "$log_file" ] || log_file="$state/$task.codex-app.log"
+      turnend="$state/$task.turn-ended"
+      "$root/bin/fm-codex-app" run-send "$thread_id" "$send_file" "$state_file" "$turnend" >>"$log_file" 2>&1 &
+      ;;
     *) echo "error: unknown backend '$backend'" >&2; return 1 ;;
   esac
 }
 
 fm_backend_send_key() {
-  local meta=$1 key=$2 backend target terminal
+  local meta=$1 key=$2 backend target terminal thread_id
   backend=$(fm_meta_get backend "$meta")
   [ -n "$backend" ] || backend=tmux
   case "$backend" in
@@ -218,6 +242,15 @@ fm_backend_send_key() {
         Escape|C-c) orca terminal send --terminal "$terminal" --interrupt --json >/dev/null ;;
         Enter) orca terminal send --terminal "$terminal" --text "" --enter --json >/dev/null ;;
         *) echo "error: unsupported Orca key '$key'" >&2; return 1 ;;
+      esac
+      ;;
+    codex-app)
+      thread_id=$(fm_meta_get thread_id "$meta")
+      [ -n "$thread_id" ] || { echo "error: no thread_id= in $meta" >&2; return 1; }
+      case "$key" in
+        Escape|C-c) "${FM_ROOT:-$(fm_backend_root)}/bin/fm-codex-app" interrupt "$thread_id" >/dev/null ;;
+        Enter) : ;;
+        *) echo "error: unsupported Codex App key '$key'" >&2; return 1 ;;
       esac
       ;;
     *) echo "error: unknown backend '$backend'" >&2; return 1 ;;

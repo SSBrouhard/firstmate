@@ -58,8 +58,8 @@ README.md            public overview and development notes
 .agents/skills/      shared skills, committed
 .claude/skills       symlink to .agents/skills for claude compatibility
 bin/                 helper scripts, committed, including fm-fleet-sync.sh for clean default-branch refreshes and gone-branch pruning; read each script's header before first use
-config/backend       optional crew runtime backend; LOCAL, gitignored; absent = tmux, "orca" = Orca worktrees/terminals
-config/backend.env   optional shell-style backend config, e.g. FM_BACKEND=orca; LOCAL, gitignored
+config/backend       optional crew runtime backend; LOCAL, gitignored; absent = tmux, "orca" = Orca worktrees/terminals, "codex-app" = Codex App threads
+config/backend.env   optional shell-style backend config, e.g. FM_BACKEND=orca or FM_BACKEND=codex-app; LOCAL, gitignored
 config/crew-harness  crewmate harness override; LOCAL, gitignored; absent or "default" = same as firstmate
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
@@ -71,15 +71,16 @@ projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" lines
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr=; Orca tasks also record terminal= and orca_worktree_id=)
+  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr=; Orca tasks also record terminal= and orca_worktree_id=; Codex App tasks also record thread_id= and turn_id=)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
+  codex-app-worktrees/<id>/ disposable git worktrees for the Codex App backend
   .hash-* .count-* .stale-* .seen-* .last-* .heartbeat-streak   watcher internals; never touch
   .last-watcher-beat watcher liveness beacon, touched every poll; fm-guard.sh reads it
 .no-mistakes/        local validation state and evidence; gitignored
 ```
 
 Task ids are short kebab slugs with a random suffix, e.g. `fix-login-k3`.
-The visible crew handle for a task is always named `fm-<id>`: a tmux window by default, or an Orca worktree/terminal when `FM_BACKEND=orca`.
+The visible crew handle for a task is always named `fm-<id>`: a tmux window by default, an Orca worktree/terminal when `FM_BACKEND=orca`, or a Codex App thread when `FM_BACKEND=codex-app`.
 
 ## 3. Bootstrap (run at every session start)
 
@@ -185,7 +186,7 @@ Environment marker for harness detection: pi sets `PI_CODING_AGENT=true` for its
 You may have been restarted mid-flight.
 Reconcile reality with your records before doing anything else:
 
-1. Read `state/*.meta` to find recorded live crewmates. For tmux tasks, `window=` names the tmux window; for Orca tasks, `terminal=` and `orca_worktree_id=` name the Orca handles.
+1. Read `state/*.meta` to find recorded live crewmates. For tmux tasks, `window=` names the tmux window; for Orca tasks, `terminal=` and `orca_worktree_id=` name the Orca handles; for Codex App tasks, `thread_id=` names the thread.
 2. Read `data/backlog.md`, every `state/*.meta`, and every `state/*.status`.
 3. For visible crew sessions with no meta (orphans): peek them, figure out what they are, ask the captain if unclear.
 4. For meta with no live crew session (dead crewmates): check the recorded `backend=` and `worktree=`, then salvage or report.
@@ -307,8 +308,8 @@ bin/fm-spawn.sh <id> projects/<repo> --scout     # scout task; records kind=scou
 
 The script resolves the harness (`fm-harness.sh crew`), owns the verified launch templates, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (only for verifying new adapters).
 
-The script creates the visible crew session through the configured backend. In tmux mode it creates a tmux window, runs `treehouse get`, waits for the worktree subshell, installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief. In Orca mode it creates an Orca-managed worktree and launches the agent with the brief, recording the Orca worktree id and terminal handle in meta.
-Worktrees start from a clean default-branch base. The exact attachment is backend-specific: tmux/treehouse may use detached HEAD, while Orca creates an attached task branch. Ship briefs tell the crewmate to create or reset its `fm/<id>` branch, while scout briefs keep the worktree scratch.
+The script creates the visible crew session through the configured backend. In tmux mode it creates a tmux window, runs `treehouse get`, waits for the worktree subshell, installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief. In Orca mode it creates an Orca-managed worktree and launches the agent with the brief, recording the Orca worktree id and terminal handle in meta. In Codex App mode it creates a git worktree under `state/codex-app-worktrees/`, starts a Codex App thread in that worktree, and sends the brief as the first turn, recording the thread id in meta.
+Worktrees start from a clean default-branch base. The exact attachment is backend-specific: tmux/treehouse may use detached HEAD, Orca creates an attached task branch, and Codex App creates a detached git worktree before the brief tells the crewmate to create `fm/<id>`. Ship briefs tell the crewmate to create or reset its `fm/<id>` branch, while scout briefs keep the worktree scratch.
 After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
 Add the task to `data/backlog.md` under In flight.
 
@@ -405,7 +406,7 @@ Heartbeats back off exponentially while they are the only wakes firing (600s dou
 Due per-task checks run before signal scanning so chatty crewmate status updates cannot starve slow polls like merge detection.
 
 Never rely on hooks or status files alone; the heartbeat review of every recorded crew session is mandatory and unconditional.
-The configured backend is the ground truth for visible crew state.
+The configured backend is the ground truth for visible crew state. For `codex-app`, use `fm-peek`, `fm-send`, and `fm-teardown`; they talk to the Codex App thread through `bin/fm-codex-app`.
 
 **Watcher liveness is guarded, not just disciplined.**
 Restarting the watcher is the last action of every wake-handling turn - but the protocol no longer relies on remembering that.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Print the tail of a crewmate pane (bounded, for cheap diagnosis).
-# Usage: fm-peek.sh <window> [lines=40]
-#   <window> may be a bare window name (fm-xyz) or session:window.
+# Print the tail of a crewmate backend session (bounded, for cheap diagnosis).
+# Usage: fm-peek.sh <selector> [lines=40]
+#   <selector> may be fm-xyz, a tmux session:window, or a backend thread id.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
