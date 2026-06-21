@@ -87,6 +87,7 @@ firstmate works from any terminal - outside tmux, crewmates land in a detached `
 
 **Or use Orca as the visible backend.**
 Set `FM_BACKEND=orca` in the environment, `config/backend`, or `config/backend.env`. The environment wins, then `config/backend`, then `config/backend.env`. In Orca mode, `fm-spawn` creates an Orca-managed worktree and launches the selected agent there, while the rest of firstmate's brief, backlog, status, and delivery protocol stays the same.
+When the selected Orca harness is Codex, firstmate marks the Orca worktree trusted in Codex's Orca runtime config; set `FM_ORCA_CODEX_CONFIG` only if Orca stores that file somewhere nonstandard.
 
 **Or use Codex App threads as the visible backend.**
 Set `FM_BACKEND=codex-app`. In Codex App mode, `fm-spawn` creates a git worktree under `state/codex-app-worktrees/`, starts a Codex App thread in that worktree, and sends the crewmate brief as the first turn. `fm-peek`, `fm-send`, `fm-watch`, and `fm-teardown` keep working through the same backend interface. This backend runs the Codex harness only; use Orca or tmux for mixed harness fleets.
@@ -177,7 +178,7 @@ FM_BACKEND=tmux          # visible crew backend: tmux (default), orca, or codex-
 FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|codex-app status: active'   # busy signatures
 FM_CODEX_APP_CODEX_BIN=codex       # codex binary used by the codex-app backend
 FM_CODEX_APP_TIMEOUT_MS=60000      # app-server request timeout for codex-app operations
-FM_ORCA_CODEX_CONFIG="$HOME/Library/Application Support/orca/codex-runtime-home/home/config.toml"
+FM_ORCA_CODEX_CONFIG="$HOME/Library/Application Support/orca/codex-runtime-home/home/config.toml"  # Orca+Codex trust config path
 # FM_CODEX_APP_DEBUG=1             # optional: mirror codex app-server stderr
 ```
 
@@ -190,6 +191,7 @@ Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistak
 
 ```sh
 bash -n bin/*.sh                          # syntax-check the toolbelt
+node --check bin/fm-codex-app             # syntax-check the Codex App client
 shellcheck bin/*.sh                       # lint the toolbelt; CI enforces this
 [ "$(readlink CLAUDE.md)" = "AGENTS.md" ]
 [ "$(readlink .claude/skills)" = "../.agents/skills" ]

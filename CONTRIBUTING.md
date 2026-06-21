@@ -37,7 +37,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   Everything personal to one captain's fleet (`data/`, `state/`, `config/`, `projects/`, `.no-mistakes/`) is gitignored; never commit it.
 - Helper scripts in `bin/` are shell-first and dependency-light.
   Bash scripts start with a usage header comment; keep it accurate when you change behavior.
-  `fm-codex-app` is Node, and the Open Brain Supermemory helpers are bash wrappers with embedded Python.
+  `fm-codex-app` is Node, dependency-free, and should pass `node --check bin/fm-codex-app`.
   `shellcheck bin/*.sh` must pass, and CI enforces it.
 - Changes to harness adapters (launch templates in `bin/fm-spawn.sh`, the adapter tables in `AGENTS.md`) must be verified empirically against the real harness, never written from documentation alone.
 - In Markdown, put each full sentence on its own line.

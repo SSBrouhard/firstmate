@@ -4,7 +4,7 @@
 # state/<task-id>.meta so fm-teardown.sh applies the full unpushed-work protection
 # again. After promoting, send the crewmate its ship instructions via fm-send.sh
 # (inventory scratch state, reset to a clean default-branch base, carry over only
-# intended fix changes, create branch fm/<task-id>, implement, then report done
+# intended fix changes, create or reset branch fm/<task-id>, implement, then report done
 # according to the project's delivery mode).
 # Usage: fm-promote.sh <task-id>
 set -eu
@@ -22,4 +22,4 @@ echo "kind=ship" >> "$TMP"
 mv "$TMP" "$META"
 
 echo "promoted $ID to ship (teardown protection restored)"
-echo "next: bin/fm-send.sh fm-$ID '<ship instructions: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create branch fm/$ID; implement; report done>'"
+echo "next: bin/fm-send.sh fm-$ID '<ship instructions: review scratch state with git status and git log; reset to a clean default-branch base; carry over only intended fix changes; create or reset branch fm/$ID; implement; report done>'"

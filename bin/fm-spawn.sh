@@ -3,8 +3,9 @@
 # Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout]
 #   With no harness arg, the harness comes from fm-harness.sh crew (config/crew-harness,
 #   falling back to firstmate's own harness). A bare adapter name (claude|codex|
-#   opencode|pi) overrides it for this spawn. A non-flag string containing whitespace
-#   is treated as a RAW launch command - the escape hatch for verifying new adapters.
+#   opencode|pi) overrides it for this spawn. On the tmux backend only, a
+#   non-flag string containing whitespace is treated as a RAW launch command -
+#   the escape hatch for verifying new adapters.
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md section 7); the default is kind=ship.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
@@ -38,7 +39,7 @@ ARG3=${POS[2]:-}
 # The verified launch command per adapter. The knowledge half of each adapter
 # (busy signature, exit command, dialogs, quirks) lives in AGENTS.md section 4.
 launch_template() {
-  # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
+  # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate shell, not here
   case "$1" in
     claude) printf '%s' 'claude --dangerously-skip-permissions "$(cat __BRIEF__)"' ;;
     codex) printf '%s' 'codex --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(cat __BRIEF__)"' ;;
