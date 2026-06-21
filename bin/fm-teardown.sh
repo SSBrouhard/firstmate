@@ -30,7 +30,7 @@ BACKEND=$(grep '^backend=' "$META" | cut -d= -f2- || true)
 ORCA_WORKTREE_ID=$(grep '^orca_worktree_id=' "$META" | cut -d= -f2- || true)
 ORCA_TERMINAL=$(grep '^terminal=' "$META" | cut -d= -f2- || true)
 CODEX_APP_THREAD_ID=$(grep '^thread_id=' "$META" | cut -d= -f2- || true)
-CODEX_APP_RUNNER_PID=$(grep '^codex_app_runner_pid=' "$META" | cut -d= -f2- || true)
+CODEX_APP_ARCHIVED=$(grep '^codex_app_archived=' "$META" | cut -d= -f2- || true)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -52,6 +52,59 @@ default_branch() {
   done
   return 1
 }
+
+git_common_dir() {
+  git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
+}
+
+git_origin_url() {
+  git -C "$1" remote get-url origin 2>/dev/null || true
+}
+
+same_project_repo() {
+  local a=$1 b=$2 a_common b_common a_origin b_origin
+  a_common=$(git_common_dir "$a" || true)
+  b_common=$(git_common_dir "$b" || true)
+  if [ -n "$a_common" ] && [ "$a_common" = "$b_common" ]; then
+    return 0
+  fi
+  a_origin=$(git_origin_url "$a")
+  b_origin=$(git_origin_url "$b")
+  [ -n "$a_origin" ] && [ "$a_origin" = "$b_origin" ]
+}
+
+if [ "$BACKEND" = codex-app ] && [ "$KIND" != scout ] && [ "$FORCE" != "--force" ]; then
+  if [ -z "$WT" ]; then
+    echo "REFUSED: Codex App ship task $ID has no known worktree path." >&2
+    echo "Firstmate cannot prove the work is landed or safe to discard. Record the app-owned worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+    exit 1
+  fi
+  if [ ! -d "$WT" ] || ! git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "REFUSED: Codex App ship task $ID has invalid worktree path: $WT" >&2
+    echo "Firstmate cannot prove the work is landed or safe to discard. Record a real app-owned git worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+    exit 1
+  fi
+  if ! same_project_repo "$WT" "$PROJ"; then
+    echo "REFUSED: Codex App ship task $ID worktree does not belong to project $PROJ: $WT" >&2
+    echo "Record the app-owned worktree for this project, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+    exit 1
+  fi
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  if [ "$branch" != "fm/$ID" ]; then
+    echo "REFUSED: Codex App ship task $ID expected worktree branch fm/$ID, got ${branch:-unknown}." >&2
+    echo "Record the app-owned task worktree, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+    exit 1
+  fi
+fi
+
+if [ "$BACKEND" = codex-app ] && [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
+  REPORT="$FM_ROOT/data/$ID/report.md"
+  if [ ! -f "$REPORT" ]; then
+    echo "REFUSED: scout task $ID has no report at $REPORT." >&2
+    echo "The report is the work product. Have the crewmate write it (or get the captain's explicit OK to discard, then --force)." >&2
+    exit 1
+  fi
+fi
 
 if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   if [ "$KIND" = scout ]; then
@@ -90,6 +143,12 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
+if [ "$BACKEND" = codex-app ] && [ -n "$CODEX_APP_THREAD_ID" ] && [ "$CODEX_APP_ARCHIVED" != 1 ] && [ "$FORCE" != "--force" ]; then
+  echo "REFUSED: Codex App thread $CODEX_APP_THREAD_ID is not marked archived." >&2
+  echo "Use set_thread_archived(threadId=$CODEX_APP_THREAD_ID, archived=true), then run: bin/fm-codex-app mark-archived $ID" >&2
+  exit 1
+fi
+
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ -d "$WT" ]; then
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
@@ -118,13 +177,10 @@ if [ -d "$WT" ]; then
       fi
       ;;
     codex-app)
-      if [ -n "$CODEX_APP_RUNNER_PID" ] && kill -0 "$CODEX_APP_RUNNER_PID" 2>/dev/null; then
-        kill "$CODEX_APP_RUNNER_PID" 2>/dev/null || true
-      fi
-      if [ -n "$CODEX_APP_THREAD_ID" ]; then
-        "$FM_ROOT/bin/fm-codex-app" archive "$CODEX_APP_THREAD_ID" >/dev/null 2>&1 || true
-      fi
-      git -C "$PROJ" worktree remove --force "$WT" >/dev/null
+      case "$WT" in
+        "$FM_ROOT/state/codex-app-worktrees/"*) git -C "$PROJ" worktree remove --force "$WT" >/dev/null ;;
+        *) : ;; # App-owned worktrees are managed by Codex App, not this shell helper.
+      esac
       ;;
     *) echo "REFUSED: unknown backend '$BACKEND' for task $ID." >&2; exit 1 ;;
   esac
@@ -134,7 +190,7 @@ if [ "$BACKEND" = tmux ]; then
   tmux kill-window -t "$T" 2>/dev/null || true
 fi
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.check.sh" "$STATE/$ID.meta" "$STATE/$ID.pi-ext.ts" \
-  "$STATE/$ID.codex-app.env" "$STATE/$ID.codex-app.log" "$STATE/$ID.codex-app-send."*
+  "$STATE/$ID.codex-app.env" "$STATE/$ID.codex-app.log" "$STATE/$ID.codex-app.capture" "$STATE/$ID.codex-app-send."*
 if [ "$KIND" != scout ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

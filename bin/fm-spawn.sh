@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Spawn a crewmate: backend UI -> isolated worktree -> agent launched with its brief.
+# Spawn a crewmate or prepare a visible Codex App thread handoff.
 # Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout]
 #   With no harness arg, the harness comes from fm-harness.sh crew (config/crew-harness,
 #   falling back to firstmate's own harness). A bare adapter name (claude|codex|
@@ -15,8 +15,8 @@
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 # Per-harness turn-end hooks are installed automatically; some live outside the worktree.
-# On success prints: spawned <id> backend=<name> harness=<name> kind=<ship|scout>
-# mode=<mode> yolo=<on|off> window=<handle> worktree=<path>
+# On success prints either spawned <id> ... worktree=<path>, or prepared <id> ...
+# with the Codex App host-tool action needed to create/fork the visible thread.
 # mode/yolo are resolved per-project from data/projects.md via fm-project-mode.sh.
 set -eu
 
@@ -79,9 +79,7 @@ ORCA_WORKTREE_ID=""
 ORCA_TERMINAL=""
 CODEX_APP_THREAD_ID=""
 CODEX_APP_TURN_ID=""
-CODEX_APP_RUNNER_PID=""
-CODEX_APP_STATE="$FM_ROOT/state/$ID.codex-app.env"
-CODEX_APP_LOG="$FM_ROOT/state/$ID.codex-app.log"
+CODEX_APP_PENDING_ACTION=""
 TURNEND="$FM_ROOT/state/$ID.turn-ended"
 PIEXT="$FM_ROOT/state/$ID.pi-ext.ts"
 
@@ -162,7 +160,6 @@ EOF
     T="$W"
     ;;
   codex-app)
-    command -v codex >/dev/null || { echo "error: FM_BACKEND=codex-app but codex is not installed" >&2; exit 1; }
     case "$ARG3" in
       *' '*) echo "error: FM_BACKEND=codex-app does not support raw launch commands; use the codex harness" >&2; exit 1 ;;
     esac
@@ -170,12 +167,9 @@ EOF
       codex*) ;;
       *) echo "error: FM_BACKEND=codex-app supports only the codex harness (got '$HARNESS')" >&2; exit 1 ;;
     esac
-    WT="$FM_ROOT/state/codex-app-worktrees/$ID"
-    [ ! -e "$WT" ] || { echo "error: Codex App worktree already exists at $WT" >&2; exit 1; }
-    mkdir -p "$(dirname "$WT")"
-    BASE=$(git_worktree_base "$PROJ_ABS") || { echo "error: cannot determine git base for $PROJ_ABS" >&2; exit 1; }
-    git -C "$PROJ_ABS" worktree add --detach "$WT" "$BASE" >/dev/null
     T="$W"
+    WT=""
+    CODEX_APP_PENDING_ACTION=create_thread_or_fork_thread
     ;;
   *) echo "error: unknown FM_BACKEND '$BACKEND' (expected tmux, orca, or codex-app)" >&2; exit 1 ;;
 esac
@@ -235,7 +229,11 @@ LAUNCH=${LAUNCH//__PIEXT__/$PIEXT}
 
 if [ "$BACKEND" = orca ]; then
   case "$HARNESS" in
-    codex*) fm_backend_trust_codex_project "$WT" ;;
+    codex*)
+      if [ "${FM_ORCA_CODEX_AUTO_TRUST:-0}" = 1 ]; then
+        fm_backend_trust_codex_project "$WT"
+      fi
+      ;;
   esac
   terminal_json=$(mktemp "${TMPDIR:-/tmp}/fm-orca-terminal.XXXXXX")
   if ! orca terminal create --worktree "id:$ORCA_WORKTREE_ID" --title "$W" --json > "$terminal_json"; then
@@ -255,44 +253,6 @@ EOF
     done
   fi
   [ -n "$ORCA_TERMINAL" ] || { echo "error: Orca did not return a terminal handle" >&2; exit 1; }
-  orca terminal send --terminal "$ORCA_TERMINAL" --text "$LAUNCH" --enter --json >/dev/null
-  case "$HARNESS" in
-    codex*)
-      for _ in $(seq 1 20); do
-        tail=$(fm_backend_orca_terminal_text "$ORCA_TERMINAL" 30 || true)
-        if printf '%s\n' "$tail" | grep -q 'Hooks need review' \
-          && printf '%s\n' "$tail" | grep -q 'Trust.*continue'; then
-          orca terminal send --terminal "$ORCA_TERMINAL" --text "2" --enter --json >/dev/null
-          break
-        fi
-        if printf '%s\n' "$tail" | grep -q 'esc to interrupt'; then
-          break
-        fi
-        sleep 1
-      done
-      ;;
-  esac
-fi
-
-if [ "$BACKEND" = codex-app ]; then
-  mkdir -p "$FM_ROOT/state"
-  rm -f "$CODEX_APP_STATE" "$CODEX_APP_LOG"
-  "$FM_ROOT/bin/fm-codex-app" run-start "$WT" "$BRIEF" "$W" "$CODEX_APP_STATE" "$TURNEND" >>"$CODEX_APP_LOG" 2>&1 &
-  CODEX_APP_RUNNER_PID=$!
-  for _ in $(seq 1 120); do
-    if [ -s "$CODEX_APP_STATE" ]; then
-      CODEX_APP_THREAD_ID=$(awk -F= '$1=="thread_id"{print $2; exit}' "$CODEX_APP_STATE")
-      CODEX_APP_TURN_ID=$(awk -F= '$1=="turn_id"{print $2; exit}' "$CODEX_APP_STATE")
-      [ -n "$CODEX_APP_THREAD_ID" ] && break
-    fi
-    if ! kill -0 "$CODEX_APP_RUNNER_PID" 2>/dev/null; then
-      cat "$CODEX_APP_LOG" >&2 2>/dev/null || true
-      echo "error: Codex App runner exited before returning a thread id" >&2
-      exit 1
-    fi
-    sleep 0.5
-  done
-  [ -n "$CODEX_APP_THREAD_ID" ] || { cat "$CODEX_APP_LOG" >&2 2>/dev/null || true; echo "error: Codex App did not return a thread id" >&2; exit 1; }
 fi
 
 # Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
@@ -318,15 +278,41 @@ mkdir -p "$FM_ROOT/state"
   [ -n "$ORCA_TERMINAL" ] && echo "terminal=$ORCA_TERMINAL"
   [ -n "$CODEX_APP_THREAD_ID" ] && echo "thread_id=$CODEX_APP_THREAD_ID"
   [ -n "$CODEX_APP_TURN_ID" ] && echo "turn_id=$CODEX_APP_TURN_ID"
-  [ -n "$CODEX_APP_RUNNER_PID" ] && echo "codex_app_runner_pid=$CODEX_APP_RUNNER_PID"
-  [ "$BACKEND" = codex-app ] && echo "codex_app_state=$CODEX_APP_STATE"
-  [ "$BACKEND" = codex-app ] && echo "codex_app_log=$CODEX_APP_LOG"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_thread_state=pending"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_pending_action=$CODEX_APP_PENDING_ACTION"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_transport=visible-thread"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_brief=$BRIEF"
 } > "$FM_ROOT/state/$ID.meta"
 
 if [ "$BACKEND" = tmux ]; then
   tmux send-keys -t "$T" -l "$LAUNCH"
   sleep 0.3
   tmux send-keys -t "$T" Enter
+elif [ "$BACKEND" = orca ]; then
+  orca terminal send --terminal "$ORCA_TERMINAL" --text "$LAUNCH" --enter --json >/dev/null
+  case "$HARNESS" in
+    codex*)
+      for _ in $(seq 1 20); do
+        tail=$(fm_backend_orca_terminal_text "$ORCA_TERMINAL" 30 || true)
+        if printf '%s\n' "$tail" | grep -q 'Hooks need review' \
+          && printf '%s\n' "$tail" | grep -q 'Trust.*continue'; then
+          orca terminal send --terminal "$ORCA_TERMINAL" --text "2" --enter --json >/dev/null
+          break
+        fi
+        if printf '%s\n' "$tail" | grep -q 'esc to interrupt'; then
+          break
+        fi
+        sleep 1
+      done
+      ;;
+  esac
 fi
 
-echo "spawned $ID backend=$BACKEND harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+if [ "$BACKEND" = codex-app ]; then
+  "$FM_ROOT/bin/fm-codex-app" prepare "$ID" "$W" "$BRIEF" >/dev/null
+  echo "prepared $ID backend=$BACKEND harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T"
+  echo "next: use Codex App create_thread or fork_thread for $W, send the brief at $BRIEF, then run:"
+  echo "      bin/fm-codex-app record-thread $ID <thread-id> [--worktree <path>] [--pending-worktree-id <id>]"
+else
+  echo "spawned $ID backend=$BACKEND harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+fi

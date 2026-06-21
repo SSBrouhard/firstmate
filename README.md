@@ -68,7 +68,7 @@ $ claude   # launch your agent harness here; AGENTS.md takes over
 ```sh
 # 1. a verified agent harness - claude, codex, opencode, or pi
 # 2. git + GitHub auth
-# 3. tmux by default, Orca CLI when FM_BACKEND=orca, or Codex CLI when FM_BACKEND=codex-app
+# 3. tmux by default, Orca CLI when FM_BACKEND=orca, or Codex Desktop when FM_BACKEND=codex-app
 gh auth login
 ```
 
@@ -80,17 +80,24 @@ cd firstmate && claude
 ```
 
 That is the whole install.
-On first launch the first mate detects what its toolchain is missing (tmux/treehouse by default, Orca CLI when `FM_BACKEND=orca`, or Codex CLI when `FM_BACKEND=codex-app`, plus no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
+On first launch the first mate detects what its toolchain is missing (tmux/treehouse by default, Orca CLI when `FM_BACKEND=orca`, plus no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
+Codex App mode requires running firstmate inside Codex Desktop so the first mate can use the app-owned thread tools.
 
 **Run the default tmux backend inside tmux for the best experience.**
 firstmate works from any terminal - outside tmux, crewmates land in a detached `firstmate` session you can attach to - but launching your harness from inside tmux puts every crewmate window in your own session, one per task, where you can watch the crew work in real time or type into any window to intervene.
 
 **Or use Orca as the visible backend.**
 Set `FM_BACKEND=orca` in the environment, `config/backend`, or `config/backend.env`. The environment wins, then `config/backend`, then `config/backend.env`. In Orca mode, `fm-spawn` creates an Orca-managed worktree and launches the selected agent there, while the rest of firstmate's brief, backlog, status, and delivery protocol stays the same.
-When the selected Orca harness is Codex, firstmate marks the Orca worktree trusted in Codex's Orca runtime config; set `FM_ORCA_CODEX_CONFIG` only if Orca stores that file somewhere nonstandard.
+When the selected Orca harness is Codex, firstmate handles the trust prompt through the Orca terminal. Set `FM_ORCA_CODEX_AUTO_TRUST=1` only if you explicitly want firstmate to pre-mark Orca worktrees trusted in Codex's Orca runtime config; set `FM_ORCA_CODEX_CONFIG` only if Orca stores that file somewhere nonstandard.
 
 **Or use Codex App threads as the visible backend.**
-Set `FM_BACKEND=codex-app`. In Codex App mode, `fm-spawn` creates a git worktree under `state/codex-app-worktrees/`, starts a Codex App thread in that worktree, and sends the crewmate brief as the first turn. `fm-peek`, `fm-send`, `fm-watch`, and `fm-teardown` keep working through the same backend interface. This backend runs the Codex harness only; use Orca or tmux for mixed harness fleets.
+Set `FM_BACKEND=codex-app` while running firstmate inside Codex Desktop.
+In Codex App mode, `fm-spawn` prepares the task metadata and prints the app action to take.
+The first mate then uses Codex Desktop's thread tools to create or fork the visible `fm-<id>` thread, send the crewmate brief, and record the returned thread id with `bin/fm-codex-app record-thread`.
+If the captain already has a visible thread on deck, firstmate can adopt it with `bin/fm-codex-app adopt-thread`.
+This is intentionally not `codex app-server`: app-server can complete headless turns without creating visible, persisted Desktop threads.
+`fm-peek` can show cached `read_thread` captures, `fm-send` refuses with the host-tool action to take, `fm-watch` still wakes on status files, and `fm-teardown` requires app archive plus the usual work-safety proof.
+This backend runs the Codex harness only; use Orca or tmux for mixed harness fleets.
 
 ## How It Works
 
@@ -142,7 +149,8 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but the watcher liveness beacon is stale or missing                                   |
 | `fm-backend.sh`          | Shared backend helpers for tmux, Orca, and Codex App runtime operations                                            |
-| `fm-codex-app`           | Dependency-free Codex App app-server client used by the `codex-app` backend                                       |
+| `fm-codex-app`           | Dependency-free Codex App visible-thread ledger used to record thread ids, captures, pending worktrees, and archive state |
+| `fm-codex-app-smoke-check.sh` | Validate visible-thread smoke evidence so headless app-server turns cannot pass as Codex App backend success    |
 | `fm-spawn.sh`            | Backend session → isolated worktree → agent launched with its brief; records ship/scout task kind                  |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`                                          |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval                                           |
@@ -176,10 +184,8 @@ FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effo
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_BACKEND=tmux          # visible crew backend: tmux (default), orca, or codex-app
 FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|codex-app status: active'   # busy signatures
-FM_CODEX_APP_CODEX_BIN=codex       # codex binary used by the codex-app backend
-FM_CODEX_APP_TIMEOUT_MS=60000      # app-server request timeout for codex-app operations
+FM_ORCA_CODEX_AUTO_TRUST=0  # set to 1 to pre-trust Orca+Codex worktrees instead of handling the prompt
 FM_ORCA_CODEX_CONFIG="$HOME/Library/Application Support/orca/codex-runtime-home/home/config.toml"  # Orca+Codex trust config path
-# FM_CODEX_APP_DEBUG=1             # optional: mirror codex app-server stderr
 ```
 
 ## Development
@@ -191,8 +197,9 @@ Local `.no-mistakes/` state and test evidence stay out of this repo; `.no-mistak
 
 ```sh
 bash -n bin/*.sh                          # syntax-check the toolbelt
-node --check bin/fm-codex-app             # syntax-check the Codex App client
+node --check bin/fm-codex-app             # syntax-check the Codex App ledger
 shellcheck bin/*.sh                       # lint the toolbelt; CI enforces this
+for t in test/*.test.sh; do "$t"; done    # run backend and smoke-contract tests
 [ "$(readlink CLAUDE.md)" = "AGENTS.md" ]
 [ "$(readlink .claude/skills)" = "../.agents/skills" ]
 FM_HEARTBEAT=2 FM_POLL=1 bin/fm-watch.sh  # watcher smoke test (prints "heartbeat")

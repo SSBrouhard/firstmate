@@ -33,13 +33,15 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
 
 - This repo is a template for running a firstmate orchestrator agent.
   `AGENTS.md` is the agent's entire job description; `CLAUDE.md` is a symlink to it, and `.claude/skills` is a symlink to `.agents/skills`.
-- Only shared material is tracked: `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, and `.agents/skills/`.
+- Only shared material is tracked: `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.github/workflows/`, `bin/`, `docs/plans/`, `test/`, and `.agents/skills/`.
   Everything personal to one captain's fleet (`data/`, `state/`, `config/`, `projects/`, `.no-mistakes/`) is gitignored; never commit it.
 - Helper scripts in `bin/` are shell-first and dependency-light.
   Bash scripts start with a usage header comment; keep it accurate when you change behavior.
   `fm-codex-app` is Node, dependency-free, and should pass `node --check bin/fm-codex-app`.
   `shellcheck bin/*.sh` must pass, and CI enforces it.
 - Changes to harness adapters (launch templates in `bin/fm-spawn.sh`, the adapter tables in `AGENTS.md`) must be verified empirically against the real harness, never written from documentation alone.
+- Changes to the Codex App backend must include real Codex Desktop visible-thread smoke evidence.
+  A completed app-server turn is not enough; evidence must show a visible thread, `list_threads`, `read_thread`, `send_message_to_thread`, archive, and restart reconciliation.
 - In Markdown, put each full sentence on its own line.
 
 ## Questions

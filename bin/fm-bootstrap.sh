@@ -68,7 +68,7 @@ BACKEND=$(fm_backend_name)
 case "$BACKEND" in
   tmux) TOOLS="tmux node gh treehouse no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
   orca) TOOLS="orca node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
-  codex-app) TOOLS="codex node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+  codex-app) TOOLS="node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
   *) TOOLS="node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
 esac
 

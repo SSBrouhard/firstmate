@@ -191,7 +191,7 @@ if (r.terminal && Array.isArray(r.terminal.tail)) {
 }
 
 fm_backend_send_text() {
-  local meta=$1 text=$2 backend target terminal thread_id root state task send_file state_file log_file turnend
+  local meta=$1 text=$2 backend target terminal thread_id root
   backend=$(fm_meta_get backend "$meta")
   [ -n "$backend" ] || backend=tmux
   case "$backend" in
@@ -210,17 +210,7 @@ fm_backend_send_text() {
       root=${FM_ROOT:-$(fm_backend_root)}
       thread_id=$(fm_meta_get thread_id "$meta")
       [ -n "$thread_id" ] || { echo "error: no thread_id= in $meta" >&2; return 1; }
-      state="$root/state"
-      task=$(basename "$meta" .meta)
-      mkdir -p "$state"
-      send_file=$(mktemp "$state/$task.codex-app-send.XXXXXX")
-      printf '%s' "$text" > "$send_file"
-      state_file=$(fm_meta_get codex_app_state "$meta")
-      [ -n "$state_file" ] || state_file="$state/$task.codex-app.env"
-      log_file=$(fm_meta_get codex_app_log "$meta")
-      [ -n "$log_file" ] || log_file="$state/$task.codex-app.log"
-      turnend="$state/$task.turn-ended"
-      "$root/bin/fm-codex-app" run-send "$thread_id" "$send_file" "$state_file" "$turnend" >>"$log_file" 2>&1 &
+      "$root/bin/fm-codex-app" send "$thread_id" "$text"
       ;;
     *) echo "error: unknown backend '$backend'" >&2; return 1 ;;
   esac
@@ -249,7 +239,7 @@ fm_backend_send_key() {
       [ -n "$thread_id" ] || { echo "error: no thread_id= in $meta" >&2; return 1; }
       case "$key" in
         Escape|C-c) "${FM_ROOT:-$(fm_backend_root)}/bin/fm-codex-app" interrupt "$thread_id" >/dev/null ;;
-        Enter) : ;;
+        Enter) "${FM_ROOT:-$(fm_backend_root)}/bin/fm-codex-app" send "$thread_id" "" ;;
         *) echo "error: unsupported Codex App key '$key'" >&2; return 1 ;;
       esac
       ;;
