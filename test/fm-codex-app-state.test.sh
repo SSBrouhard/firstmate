@@ -102,3 +102,15 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted-other thread-2 /
   exit 1
 fi
 grep -q 'already recorded' "$TMP/duplicate-thread.err"
+
+OPS="$TMP/ops"
+mkdir -p "$OPS/state" "$OPS/data" "$OPS/config"
+ln -s "$ROOT/bin" "$OPS/bin"
+SYMLINK_ID=symlink-root
+cat > "$OPS/state/$SYMLINK_ID.meta" <<EOF
+backend=codex-app
+window=fm-$SYMLINK_ID
+thread_id=thread-symlink
+EOF
+( cd "$OPS" && ./bin/fm-codex-app mark-archived "$SYMLINK_ID" >/dev/null )
+grep -qx 'codex_app_archived=1' "$OPS/state/$SYMLINK_ID.meta"

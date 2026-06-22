@@ -6,7 +6,23 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const ROOT = process.env.FM_ROOT || path.resolve(__dirname, "..");
+function looksLikeFleetRoot(dir) {
+  return fs.existsSync(path.join(dir, "state"))
+    && fs.existsSync(path.join(dir, "data"))
+    && fs.existsSync(path.join(dir, "bin", "fm-codex-app"));
+}
+
+function findRootFromCwd() {
+  let dir = process.cwd();
+  while (true) {
+    if (looksLikeFleetRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+const ROOT = process.env.FM_ROOT || findRootFromCwd() || path.resolve(__dirname, "..");
 const STATE = path.join(ROOT, "state");
 
 function usage() {

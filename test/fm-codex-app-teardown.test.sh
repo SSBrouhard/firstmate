@@ -6,16 +6,18 @@ ID=codex-app-teardown-$$
 SCOUT_ID=codex-app-scout-teardown-$$
 OTHER_ID=codex-app-other-worktree-$$
 DIRTY_ID=codex-app-dirty-worktree-$$
+MERGED_ID=codex-app-merged-missing-worktree-$$
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-codex-app-teardown.XXXXXX")
 META="$ROOT/state/$ID.meta"
 SCOUT_META="$ROOT/state/$SCOUT_ID.meta"
 SCOUT_CAPTURE="$ROOT/state/$SCOUT_ID.codex-app.capture"
 OTHER_META="$ROOT/state/$OTHER_ID.meta"
 DIRTY_META="$ROOT/state/$DIRTY_ID.meta"
+MERGED_META="$ROOT/state/$MERGED_ID.meta"
 cleanup() {
   rm -rf "$TMP"
   rm -rf "$ROOT/data/$SCOUT_ID"
-  rm -f "$META" "$SCOUT_META" "$SCOUT_CAPTURE" "$OTHER_META" "$DIRTY_META" "$ROOT/state/$OTHER_ID.err" "$ROOT/state/$DIRTY_ID.err"
+  rm -f "$META" "$SCOUT_META" "$SCOUT_CAPTURE" "$OTHER_META" "$DIRTY_META" "$MERGED_META" "$ROOT/state/$OTHER_ID.err" "$ROOT/state/$DIRTY_ID.err" "$ROOT/state/$MERGED_ID.err"
 }
 trap cleanup EXIT
 
@@ -47,6 +49,47 @@ git -C "$TMP/project" config user.name Firstmate
 printf 'project\n' > "$TMP/project/README.md"
 git -C "$TMP/project" add README.md
 git -C "$TMP/project" commit -m init >/dev/null
+git -C "$TMP/project" branch -M main
+git init --bare "$TMP/origin.git" >/dev/null
+git -C "$TMP/project" remote add origin "$TMP/origin.git"
+git -C "$TMP/project" push -u origin main >/dev/null 2>&1
+
+git -C "$TMP/project" checkout -b "fm/$MERGED_ID" >/dev/null 2>&1
+printf 'merged\n' > "$TMP/project/merged.txt"
+git -C "$TMP/project" add merged.txt
+git -C "$TMP/project" commit -m merged >/dev/null
+git -C "$TMP/project" checkout main >/dev/null 2>&1
+git -C "$TMP/project" merge --no-ff "fm/$MERGED_ID" -m "merge test pr" >/dev/null
+MERGED_COMMIT=$(git -C "$TMP/project" rev-parse HEAD)
+git -C "$TMP/project" push origin main >/dev/null 2>&1
+git -C "$TMP/project" remote set-head origin -a >/dev/null 2>&1 || true
+
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" -q .state "*) printf 'MERGED\n' ;;
+  *" -q .baseRefName "*) printf 'main\n' ;;
+  *" -q .mergeCommit.oid "*) printf '$MERGED_COMMIT\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$TMP/bin/gh"
+cat > "$MERGED_META" <<EOF
+backend=codex-app
+window=fm-$MERGED_ID
+worktree=/tmp/firstmate-missing-codex-app-worktree-$MERGED_ID
+project=$TMP/project
+harness=codex
+kind=ship
+mode=no-mistakes
+yolo=off
+thread_id=thread-$MERGED_ID
+codex_app_archived=1
+pr=https://example.invalid/pr/1
+EOF
+PATH="$TMP/bin:$PATH" "$ROOT/bin/fm-teardown.sh" "$MERGED_ID" >/dev/null
+[ ! -e "$MERGED_META" ]
 
 git init "$TMP/other" >/dev/null
 git -C "$TMP/other" config user.email firstmate-test@example.com

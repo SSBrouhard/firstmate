@@ -61,6 +61,10 @@ git_origin_url() {
   git -C "$1" remote get-url origin 2>/dev/null || true
 }
 
+pr_url() {
+  grep '^pr=' "$META" | cut -d= -f2- || true
+}
+
 same_project_repo() {
   local a=$1 b=$2 a_common b_common a_origin b_origin
   a_common=$(git_common_dir "$a" || true)
@@ -73,27 +77,67 @@ same_project_repo() {
   [ -n "$a_origin" ] && [ "$a_origin" = "$b_origin" ]
 }
 
+codex_app_pr_landed() {
+  local url state base merge default target
+  url=$(pr_url)
+  [ -n "$url" ] || return 1
+  command -v gh >/dev/null 2>&1 || return 1
+
+  state=$(gh pr view "$url" --json state -q .state 2>/dev/null || true)
+  [ "$state" = MERGED ] || return 1
+
+  base=$(gh pr view "$url" --json baseRefName -q .baseRefName 2>/dev/null || true)
+  merge=$(gh pr view "$url" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || true)
+  [ -n "$base" ] && [ -n "$merge" ] || return 1
+
+  default=$(default_branch 2>/dev/null || true)
+  if [ -n "$default" ] && [ "$base" != "$default" ]; then
+    return 1
+  fi
+
+  git -C "$PROJ" fetch --quiet origin "$base" >/dev/null 2>&1 || true
+  target="origin/$base"
+  if ! git -C "$PROJ" rev-parse --verify --quiet "$target" >/dev/null; then
+    target="$base"
+  fi
+  git -C "$PROJ" merge-base --is-ancestor "$merge" "$target" >/dev/null 2>&1
+}
+
 if [ "$BACKEND" = codex-app ] && [ "$KIND" != scout ] && [ "$FORCE" != "--force" ]; then
+  CODEX_APP_PR_LANDED=0
+  if codex_app_pr_landed; then
+    CODEX_APP_PR_LANDED=1
+  fi
   if [ -z "$WT" ]; then
+    if [ "$CODEX_APP_PR_LANDED" = 1 ]; then
+      :
+    else
     echo "REFUSED: Codex App ship task $ID has no known worktree path." >&2
     echo "Firstmate cannot prove the work is landed or safe to discard. Record the app-owned worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
     exit 1
+    fi
   fi
   if [ ! -d "$WT" ] || ! git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [ "$CODEX_APP_PR_LANDED" = 1 ]; then
+      :
+    else
     echo "REFUSED: Codex App ship task $ID has invalid worktree path: $WT" >&2
     echo "Firstmate cannot prove the work is landed or safe to discard. Record a real app-owned git worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
     exit 1
+    fi
   fi
-  if ! same_project_repo "$WT" "$PROJ"; then
-    echo "REFUSED: Codex App ship task $ID worktree does not belong to project $PROJ: $WT" >&2
-    echo "Record the app-owned worktree for this project, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
-    exit 1
-  fi
-  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-  if [ "$branch" != "fm/$ID" ]; then
-    echo "REFUSED: Codex App ship task $ID expected worktree branch fm/$ID, got ${branch:-unknown}." >&2
-    echo "Record the app-owned task worktree, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
-    exit 1
+  if [ -d "$WT" ] && git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if ! same_project_repo "$WT" "$PROJ"; then
+      echo "REFUSED: Codex App ship task $ID worktree does not belong to project $PROJ: $WT" >&2
+      echo "Record the app-owned worktree for this project, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+      exit 1
+    fi
+    branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    if [ "$branch" != "fm/$ID" ]; then
+      echo "REFUSED: Codex App ship task $ID expected worktree branch fm/$ID, got ${branch:-unknown}." >&2
+      echo "Record the app-owned task worktree, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+      exit 1
+    fi
   fi
 fi
 
