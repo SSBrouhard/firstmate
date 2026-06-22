@@ -4,6 +4,7 @@
 #          Detect: prints one line per problem and exits 0. Silent = all good.
 #          Lines: "MISSING: <tool> (install: <command>)", "NEEDS_GH_AUTH",
 #                 "CREW_HARNESS_OVERRIDE: <name>", "FLEET_SYNC: <repo>: skipped: <reason>".
+#          Tool detection is backend-specific from FM_BACKEND/config/backend(.env).
 #          Fleet sync fetches, fast-forwards, and prunes gone local branches;
 #          it is bounded by FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT, default 20s.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
@@ -12,6 +13,8 @@
 set -u
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/fm-backend.sh
+. "$FM_ROOT/bin/fm-backend.sh"
 
 fleet_sync() {
   [ -x "$FM_ROOT/bin/fm-fleet-sync.sh" ] || return 0
@@ -53,7 +56,8 @@ fleet_sync() {
 
 install_cmd() {
   case "$1" in
-    tmux|node|gh) echo "brew install $1  # or the platform's package manager" ;;
+    tmux|node|gh|orca) echo "brew install $1  # or the platform's package manager" ;;
+    codex) echo "curl -fsSL https://chatgpt.com/codex/install.sh | sh" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
@@ -61,7 +65,13 @@ install_cmd() {
   esac
 }
 
-TOOLS="tmux node gh treehouse no-mistakes gh-axi chrome-devtools-axi lavish-axi"
+BACKEND=$(fm_backend_name)
+case "$BACKEND" in
+  tmux) TOOLS="tmux node gh treehouse no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+  orca) TOOLS="orca node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+  codex-app) TOOLS="node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+  *) TOOLS="node gh no-mistakes gh-axi chrome-devtools-axi lavish-axi" ;;
+esac
 
 if [ "${1:-}" = "install" ]; then
   shift

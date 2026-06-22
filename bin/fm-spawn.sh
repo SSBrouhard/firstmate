@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Spawn a crewmate: tmux window -> treehouse worktree subshell -> agent launched with its brief.
+# Spawn a crewmate or prepare a visible Codex App thread handoff.
 # Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout]
 #   With no harness arg, the harness comes from fm-harness.sh crew (config/crew-harness,
 #   falling back to firstmate's own harness). A bare adapter name (claude|codex|
-#   opencode|pi) overrides it for this spawn. A non-flag string containing whitespace
-#   is treated as a RAW launch command - the escape hatch for verifying new adapters.
+#   opencode|pi) overrides it for this spawn. On the tmux backend only, a
+#   non-flag string containing whitespace is treated as a RAW launch command -
+#   the escape hatch for verifying new adapters.
+#   FM_BACKEND=codex-app supports only the codex harness and prepares app-owned
+#   visible thread metadata; the firstmate must create/fork/send through Codex
+#   Desktop host tools, then record the returned thread id.
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md section 7); the default is kind=ship.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
@@ -14,11 +18,14 @@
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 # Per-harness turn-end hooks are installed automatically; some live outside the worktree.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout> mode=<mode> yolo=<on|off> window=<session:window> worktree=<path>
+# On success prints either spawned <id> ... worktree=<path>, or prepared <id> ...
+# with the Codex App host-tool action needed to create/fork the visible thread.
 # mode/yolo are resolved per-project from data/projects.md via fm-project-mode.sh.
 set -eu
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/fm-backend.sh
+. "$FM_ROOT/bin/fm-backend.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
 KIND=ship
 POS=()
@@ -35,7 +42,7 @@ ARG3=${POS[2]:-}
 # The verified launch command per adapter. The knowledge half of each adapter
 # (busy signature, exit command, dialogs, quirks) lives in AGENTS.md section 4.
 launch_template() {
-  # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
+  # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate shell, not here
   case "$1" in
     claude) printf '%s' 'claude --dangerously-skip-permissions "$(cat __BRIEF__)"' ;;
     codex) printf '%s' 'codex --dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(cat __BRIEF__)"' ;;
@@ -66,44 +73,113 @@ esac
 BRIEF="$FM_ROOT/data/$ID/brief.md"
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 PROJ_ABS="$(cd "$PROJ" && pwd)"
-
-# Same session when firstmate already runs inside tmux; dedicated session otherwise.
-if [ -n "${TMUX:-}" ]; then
-  SES=$(tmux display-message -p '#S')
-else
-  tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
-  SES=firstmate
-fi
+BACKEND=$(fm_backend_name)
 
 W="fm-$ID"
-T="$SES:$W"
-if tmux list-windows -t "$SES" -F '#{window_name}' | grep -qx "$W"; then
-  echo "error: window $T already exists" >&2
-  exit 1
-fi
-
-tmux new-window -d -t "$SES" -n "$W" -c "$PROJ_ABS"
-tmux send-keys -t "$T" 'treehouse get' Enter
-
-# Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
+T=""
 WT=""
-for _ in $(seq 1 60); do
-  p=$(tmux display-message -p -t "$T" '#{pane_current_path}' 2>/dev/null || true)
-  if [ -n "$p" ] && [ "$p" != "$PROJ_ABS" ]; then
-    WT="$p"
-    break
+ORCA_WORKTREE_ID=""
+ORCA_TERMINAL=""
+CODEX_APP_THREAD_ID=""
+CODEX_APP_TURN_ID=""
+CODEX_APP_PENDING_ACTION=""
+TURNEND="$FM_ROOT/state/$ID.turn-ended"
+PIEXT="$FM_ROOT/state/$ID.pi-ext.ts"
+
+git_worktree_base() {
+  local repo=$1 ref branch
+  ref=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$ref" ]; then
+    echo "$ref"
+    return 0
   fi
-  sleep 1
-done
-if [ -z "$WT" ]; then
-  echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
-  exit 1
-fi
+  for branch in main master; do
+    if git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      echo "origin/$branch"
+      return 0
+    fi
+    if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+      echo "$branch"
+      return 0
+    fi
+  done
+  git -C "$repo" rev-parse --verify HEAD 2>/dev/null
+}
+
+case "$BACKEND" in
+  tmux)
+    # Same session when firstmate already runs inside tmux; dedicated session otherwise.
+    if [ -n "${TMUX:-}" ]; then
+      SES=$(tmux display-message -p '#S')
+    else
+      tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
+      SES=firstmate
+    fi
+
+    T="$SES:$W"
+    if tmux list-windows -t "$SES" -F '#{window_name}' | grep -qx "$W"; then
+      echo "error: window $T already exists" >&2
+      exit 1
+    fi
+
+    tmux new-window -d -t "$SES" -n "$W" -c "$PROJ_ABS"
+    tmux send-keys -t "$T" 'treehouse get' Enter
+
+    # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
+    for _ in $(seq 1 60); do
+      p=$(tmux display-message -p -t "$T" '#{pane_current_path}' 2>/dev/null || true)
+      if [ -n "$p" ] && [ "$p" != "$PROJ_ABS" ]; then
+        WT="$p"
+        break
+      fi
+      sleep 1
+    done
+    if [ -z "$WT" ]; then
+      echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
+      exit 1
+    fi
+    ;;
+  orca)
+    command -v orca >/dev/null || { echo "error: FM_BACKEND=orca but orca is not installed" >&2; exit 1; }
+    case "$ARG3" in
+      *' '*) echo "error: FM_BACKEND=orca does not support raw launch commands yet; use a verified harness name" >&2; exit 1 ;;
+    esac
+    orca repo add --path "$PROJ_ABS" --json >/dev/null 2>&1 || true
+    create_json=$(mktemp "${TMPDIR:-/tmp}/fm-orca-create.XXXXXX")
+    if ! orca worktree create --repo "path:$PROJ_ABS" --name "$W" --setup skip --no-parent --json > "$create_json"; then
+      cat "$create_json" >&2
+      rm -f "$create_json"
+      exit 1
+    fi
+    IFS=$(printf '\t') read -r ORCA_WORKTREE_ID WT ORCA_TERMINAL <<EOF
+$(fm_backend_parse_worktree_create < "$create_json")
+EOF
+    rm -f "$create_json"
+    [ -n "$ORCA_WORKTREE_ID" ] || { echo "error: Orca did not return a worktree id" >&2; exit 1; }
+    if [ -z "$WT" ]; then
+      WT=$(orca worktree show --worktree "id:$ORCA_WORKTREE_ID" --json | fm_backend_json_get result.worktree.path)
+    fi
+    [ -n "$WT" ] || { echo "error: Orca did not return a worktree path" >&2; exit 1; }
+    T="$W"
+    ;;
+  codex-app)
+    case "$ARG3" in
+      *' '*) echo "error: FM_BACKEND=codex-app does not support raw launch commands; use the codex harness" >&2; exit 1 ;;
+    esac
+    case "$HARNESS" in
+      codex*) ;;
+      *) echo "error: FM_BACKEND=codex-app supports only the codex harness (got '$HARNESS')" >&2; exit 1 ;;
+    esac
+    T="$W"
+    WT=""
+    CODEX_APP_PENDING_ACTION=create_thread_or_fork_thread
+    ;;
+  *) echo "error: unknown FM_BACKEND '$BACKEND' (expected tmux, orca, or codex-app)" >&2; exit 1 ;;
+esac
 
 # Per-harness turn-end hook: a file that touches state/<id>.turn-ended when the
 # agent finishes a turn. Worktree-resident hooks are kept out of git's view so
 # they never block teardown's dirty check or leak into a commit.
-TURNEND="$FM_ROOT/state/$ID.turn-ended"
 exclude_path() {
   local rel=$1 EXCL
   EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)
@@ -134,7 +210,7 @@ EOF
     # Written OUTSIDE the worktree: pi's project-trust gate fires on any extension
     # loaded from inside the project (verified live), but an explicit -e path
     # elsewhere loads without a dialog. Lives in state/, cleaned by teardown.
-    cat > "$FM_ROOT/state/$ID.pi-ext.ts" <<EOF
+    cat > "$PIEXT" <<EOF
 // Firstmate turn-end signal; written by fm-spawn.
 // Use "turn_end" (fires after each turn the agent finishes), not "agent_end"
 // (fires once, only when the whole run exits): the watcher needs a signal at
@@ -150,6 +226,38 @@ EOF
     ;;
 esac
 
+LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
+LAUNCH=${LAUNCH//__TURNEND__/$TURNEND}
+LAUNCH=${LAUNCH//__PIEXT__/$PIEXT}
+
+if [ "$BACKEND" = orca ]; then
+  case "$HARNESS" in
+    codex*)
+      if [ "${FM_ORCA_CODEX_AUTO_TRUST:-0}" = 1 ]; then
+        fm_backend_trust_codex_project "$WT"
+      fi
+      ;;
+  esac
+  terminal_json=$(mktemp "${TMPDIR:-/tmp}/fm-orca-terminal.XXXXXX")
+  if ! orca terminal create --worktree "id:$ORCA_WORKTREE_ID" --title "$W" --json > "$terminal_json"; then
+    cat "$terminal_json" >&2
+    rm -f "$terminal_json"
+    exit 1
+  fi
+  IFS=$(printf '\t') read -r _unused_id _unused_path ORCA_TERMINAL <<EOF
+$(fm_backend_parse_worktree_create < "$terminal_json")
+EOF
+  rm -f "$terminal_json"
+  if [ -z "$ORCA_TERMINAL" ]; then
+    for _ in $(seq 1 30); do
+      ORCA_TERMINAL=$(orca terminal list --worktree "id:$ORCA_WORKTREE_ID" --json | fm_backend_first_terminal)
+      [ -n "$ORCA_TERMINAL" ] && break
+      sleep 1
+    done
+  fi
+  [ -n "$ORCA_TERMINAL" ] || { echo "error: Orca did not return a terminal handle" >&2; exit 1; }
+fi
+
 # Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
 # Recorded in meta so fm-teardown's safety check and the validate/merge stages can
 # branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
@@ -161,6 +269,7 @@ EOF
 
 mkdir -p "$FM_ROOT/state"
 {
+  echo "backend=$BACKEND"
   echo "window=$T"
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
@@ -168,13 +277,45 @@ mkdir -p "$FM_ROOT/state"
   echo "kind=$KIND"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
+  [ -n "$ORCA_WORKTREE_ID" ] && echo "orca_worktree_id=$ORCA_WORKTREE_ID"
+  [ -n "$ORCA_TERMINAL" ] && echo "terminal=$ORCA_TERMINAL"
+  [ -n "$CODEX_APP_THREAD_ID" ] && echo "thread_id=$CODEX_APP_THREAD_ID"
+  [ -n "$CODEX_APP_TURN_ID" ] && echo "turn_id=$CODEX_APP_TURN_ID"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_thread_state=pending"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_pending_action=$CODEX_APP_PENDING_ACTION"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_transport=visible-thread"
+  [ "$BACKEND" = codex-app ] && echo "codex_app_brief=$BRIEF"
 } > "$FM_ROOT/state/$ID.meta"
 
-LAUNCH=${LAUNCH//__BRIEF__/$BRIEF}
-LAUNCH=${LAUNCH//__TURNEND__/$TURNEND}
-LAUNCH=${LAUNCH//__PIEXT__/$FM_ROOT/state/$ID.pi-ext.ts}
-tmux send-keys -t "$T" -l "$LAUNCH"
-sleep 0.3
-tmux send-keys -t "$T" Enter
+if [ "$BACKEND" = tmux ]; then
+  tmux send-keys -t "$T" -l "$LAUNCH"
+  sleep 0.3
+  tmux send-keys -t "$T" Enter
+elif [ "$BACKEND" = orca ]; then
+  orca terminal send --terminal "$ORCA_TERMINAL" --text "$LAUNCH" --enter --json >/dev/null
+  case "$HARNESS" in
+    codex*)
+      for _ in $(seq 1 20); do
+        tail=$(fm_backend_orca_terminal_text "$ORCA_TERMINAL" 30 || true)
+        if printf '%s\n' "$tail" | grep -q 'Hooks need review' \
+          && printf '%s\n' "$tail" | grep -q 'Trust.*continue'; then
+          orca terminal send --terminal "$ORCA_TERMINAL" --text "2" --enter --json >/dev/null
+          break
+        fi
+        if printf '%s\n' "$tail" | grep -q 'esc to interrupt'; then
+          break
+        fi
+        sleep 1
+      done
+      ;;
+  esac
+fi
 
-echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+if [ "$BACKEND" = codex-app ]; then
+  "$FM_ROOT/bin/fm-codex-app" prepare "$ID" "$W" "$BRIEF" >/dev/null
+  echo "prepared $ID backend=$BACKEND harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T"
+  echo "next: use Codex App create_thread or fork_thread for $W, send the brief at $BRIEF, then run:"
+  echo "      bin/fm-codex-app record-thread $ID <thread-id> [--worktree <path>] [--pending-worktree-id <id>]"
+else
+  echo "spawned $ID backend=$BACKEND harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+fi

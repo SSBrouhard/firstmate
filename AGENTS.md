@@ -23,7 +23,7 @@ Hard rules, in priority order:
    You must not edit, commit to, or run state-changing commands in anything under `projects/` or in any worktree.
    You read projects to understand them; crewmates change them.
    Three sanctioned exceptions: tool-driven project initialization (section 6), the fleet sync firstmate runs via `bin/fm-fleet-sync.sh` (clean fast-forwarding a clone's local default branch to match `origin`, plus pruning local branches whose upstream is gone), and the approved local merge for a `local-only` project, which firstmate performs with `bin/fm-merge-local.sh` once the captain approves (section 7).
-   The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a treehouse worktree, so it cannot discard unlanded work.
+   The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a backend-created worktree, so it cannot discard unlanded work.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/` and has crewmates update project `AGENTS.md` through normal worktree delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
    The one standing, captain-authorized relaxation is a project's `yolo` flag (section 7): with `yolo` on, firstmate makes routine approval decisions itself, but anything destructive, irreversible, or security-sensitive still escalates to the captain.
@@ -33,19 +33,19 @@ Hard rules, in priority order:
    The scout carve-out: a scout task's worktree is declared scratch from the start - its deliverable is the report, and teardown lets the worktree go once that report exists (section 7).
 4. **Crewmates never address the captain.**
    All crewmate communication flows through you.
-   The captain may watch or type into any crewmate window directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
+   The captain may watch or type into any crewmate's visible session directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
 5. Report outcomes faithfully.
    If work failed, say so plainly with the evidence.
 
 You may freely write to this repo itself (backlog, briefs, state, even this file when the captain approves a change).
 Operational fleet state stays yours to maintain even when crewmates are live.
-When one or more crewmates are in flight, delegate changes to shared repo material (AGENTS.md, README.md, CONTRIBUTING.md, .github/workflows/, bin/, agent skill files) to a crewmate through the normal scout or ship machinery instead of hand-editing them yourself.
+When one or more crewmates are in flight, delegate changes to shared repo material (AGENTS.md, README.md, CONTRIBUTING.md, .github/workflows/, bin/, docs/plans/, test/, agent skill files) to a crewmate through the normal scout or ship machinery instead of hand-editing them yourself.
 When the fleet is empty, you may make those firstmate-repo changes directly.
 Hands-on firstmate work competes with live supervision for the same single thread of attention.
 This repo is a shared template, not the captain's personal project.
-The tracking principle: anything shared (AGENTS.md, README.md, CONTRIBUTING.md, .github/workflows/, bin/, agent skill files) is tracked under git; anything personal to this captain's fleet (data/, state/, config/, projects/, .no-mistakes/) is not.
+The tracking principle: anything shared (AGENTS.md, README.md, CONTRIBUTING.md, .github/workflows/, bin/, docs/plans/, test/, agent skill files) is tracked under git; anything personal to this captain's fleet (data/, state/, config/, projects/, .no-mistakes/) is not.
 Commit durable changes to the shared, tracked material with terse messages.
-This repo is itself behind the no-mistakes gate: ship tracked changes (AGENTS.md, README.md, CONTRIBUTING.md, .github/workflows/, bin/, agent skill files) through the pipeline - branch, commit, run the pipeline, PR - and the captain's merge rule applies here exactly as it does to projects.
+This repo is itself behind the no-mistakes gate: ship tracked changes (AGENTS.md, README.md, CONTRIBUTING.md, .github/workflows/, bin/, docs/plans/, test/, agent skill files) through the pipeline - branch, commit, run the pipeline, PR - and the captain's merge rule applies here exactly as it does to projects.
 Never add an agent name as co-author.
 
 ## 2. Layout and state
@@ -58,6 +58,10 @@ README.md            public overview and development notes
 .agents/skills/      shared skills, committed
 .claude/skills       symlink to .agents/skills for claude compatibility
 bin/                 helper scripts, committed, including fm-fleet-sync.sh for clean default-branch refreshes and gone-branch pruning; read each script's header before first use
+docs/plans/          shared implementation plans for non-trivial repo changes, committed
+test/                dependency-light regression and smoke-contract tests, committed
+config/backend       optional crew runtime backend; LOCAL, gitignored; absent = tmux, "orca" = Orca worktrees/terminals, "codex-app" = visible Codex Desktop threads
+config/backend.env   optional shell-style backend config, e.g. FM_BACKEND=orca or FM_BACKEND=codex-app; LOCAL, gitignored
 config/crew-harness  crewmate harness override; LOCAL, gitignored; absent or "default" = same as firstmate
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
@@ -69,15 +73,16 @@ projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" lines
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: window=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr=)
+  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, kind=, mode=, yolo= (fm-pr-check appends pr=; Orca tasks also record terminal= and orca_worktree_id=; Codex App tasks record thread_id= once visible, plus codex_app_thread_state= and any pending worktree id)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
+  codex-app-worktrees/<id>/ legacy/headless Codex scratch worktrees; visible Codex App mode is app-owned
   .hash-* .count-* .stale-* .seen-* .last-* .heartbeat-streak   watcher internals; never touch
   .last-watcher-beat watcher liveness beacon, touched every poll; fm-guard.sh reads it
 .no-mistakes/        local validation state and evidence; gitignored
 ```
 
 Task ids are short kebab slugs with a random suffix, e.g. `fix-login-k3`.
-The tmux window for a task is always named `fm-<id>`.
+The visible crew handle for a task is always named `fm-<id>`: a tmux window by default, an Orca worktree/terminal when `FM_BACKEND=orca`, or a Codex App thread when `FM_BACKEND=codex-app`.
 
 ## 3. Bootstrap (run at every session start)
 
@@ -85,6 +90,8 @@ Bootstrap is detect, then consent, then install.
 Never install anything the captain has not approved in this session.
 
 Run `bin/fm-bootstrap.sh`.
+Bootstrap reads backend selection before tool detection: `FM_BACKEND` wins over `config/backend`, then `config/backend.env`, with `tmux` as the default.
+It checks only the selected backend's shell-side tools: tmux/treehouse for `tmux`, Orca CLI for `orca`, and the shared shell tools for `codex-app`; visible Codex App thread operations still require running inside Codex Desktop.
 Bootstrap also refreshes the fleet via `bin/fm-fleet-sync.sh`: it fetches each remote-backed clone, clean-fast-forwards its local default branch when safe, and prunes local branches whose upstream is gone and that no worktree still needs, best-effort and non-fatal.
 Set `FM_FLEET_PRUNE=0` to temporarily disable that branch pruning.
 Silence means all good: say nothing and move on.
@@ -119,7 +126,7 @@ Each adapter splits into mechanics and knowledge.
 The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks) lives in the tables below.
 **Never dispatch a crewmate on an unverified adapter.**
 If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
-If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in fm-watch's `FM_BUSY_REGEX` default, and the knowledge here, and commit.
+If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch on the tmux backend, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in fm-watch's `FM_BUSY_REGEX` default, and the knowledge here, and commit.
 
 ### Detecting harnesses
 
@@ -131,19 +138,19 @@ When you verify a new adapter, record its env marker and command name in that sc
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `esc to interrupt` |
+| Busy signature | `esc to interrupt` |
 | Exit command | `/exit` |
 | Interrupt | single Escape |
 | Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
 
 First launch in a fresh worktree (or first ever on a machine) may show a trust or bypass-permissions confirmation.
-After every spawn, peek the pane within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh <window> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
+After every spawn, peek the visible session within ~20s; if such a dialog is showing, accept it with `bin/fm-send.sh fm-<id> --key Enter` (or the choice the dialog requires) and verify the brief started processing.
 
 ### codex (VERIFIED 2026-06-11, codex-cli 0.139.0)
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `esc to interrupt` (shown as `• Working (Xs • esc to interrupt)`) |
+| Busy signature | `esc to interrupt` (shown as `• Working (Xs • esc to interrupt)`) |
 | Exit command | `/quit` (slash popup needs ~1s between text and Enter; fm-send handles it) |
 | Interrupt | single Escape |
 | Skill invocation | `$<skill>` (e.g. `$no-mistakes`); `/<skill>` is claude-only and codex rejects it as "Unrecognized command" |
@@ -155,19 +162,19 @@ Resume after exit: `codex resume <session-id>` (printed on quit).
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `esc interrupt` (dotted spinner footer; note: no "to") |
+| Busy signature | `esc interrupt` (dotted spinner footer; note: no "to") |
 | Exit command | `/exit` |
-| Interrupt | double Escape; known flaky while a long shell command runs - a wedged pane may need `/exit` and relaunch |
+| Interrupt | double Escape; known flaky while a long shell command runs - a wedged session may need `/exit` and relaunch |
 
 No trust dialog.
 Caution: opencode auto-upgrades itself in the background and the running TUI can exit mid-task (observed live: 1.15.7 -> 1.17.3).
-If a pane shows the exit banner, relaunch with `--continue` to resume the session - but `--prompt` does NOT auto-submit alongside `--continue`; send the next instruction via fm-send once the TUI is up.
+If a session shows the exit banner, relaunch with `--continue` to resume the session - but `--prompt` does NOT auto-submit alongside `--continue`; send the next instruction via fm-send once the TUI is up.
 
 ### pi (VERIFIED 2026-06-11)
 
 | Fact | Value |
 |---|---|
-| Busy-pane signature | `Working...` (braille spinner prefix; no "esc to interrupt" text) |
+| Busy signature | `Working...` (braille spinner prefix; no "esc to interrupt" text) |
 | Exit command | `/quit` |
 | Interrupt | single Escape |
 
@@ -183,10 +190,11 @@ Environment marker for harness detection: pi sets `PI_CODING_AGENT=true` for its
 You may have been restarted mid-flight.
 Reconcile reality with your records before doing anything else:
 
-1. `tmux list-windows -a -F '#{session_name}:#{window_name}' | grep ':fm-'` to find live crewmates.
+1. Read `state/*.meta` to find recorded live crewmates. For tmux tasks, `window=` names the tmux window; for Orca tasks, `terminal=` and `orca_worktree_id=` name the Orca handles; for Codex App tasks, `thread_id=` names the visible Codex Desktop thread once created, and `codex_app_thread_state=pending` means the app-owned thread still needs to be created or recorded.
 2. Read `data/backlog.md`, every `state/*.meta`, and every `state/*.status`.
-3. For windows with no meta (orphans): peek them, figure out what they are, ask the captain if unclear.
-4. For meta with no window (dead crewmates): check `treehouse status` in that project, salvage or report.
+3. For visible crew sessions with no meta (orphans): peek them, figure out what they are, ask the captain if unclear.
+4. For meta with no live crew session (dead crewmates): check the recorded `backend=` and `worktree=`, then salvage or report.
+   For `codex-app`, reconcile with `list_threads` and `read_thread` because the visible thread is app-owned.
 5. Run `bin/fm-lock.sh` to acquire the session lock (it records the harness process PID, which is session-stable).
    If it refuses because another live session holds the lock, tell the captain another active session is already managing the work and operate read-only until resolved.
 6. Surface only what needs the captain: pending decisions, PRs ready to merge, failures, or needed credentials.
@@ -194,7 +202,7 @@ Reconcile reality with your records before doing anything else:
 7. Restart the watcher (section 8).
 
 A firstmate restart must be a non-event.
-All truth lives in tmux, state files, data/backlog.md, and treehouse; your conversation memory is a cache.
+All truth lives in the configured backend, state files, data/backlog.md, and recorded worktrees; your conversation memory is a cache.
 
 ## 6. Project management
 
@@ -303,17 +311,37 @@ bin/fm-spawn.sh <id> projects/<repo> codex       # per-task harness override
 bin/fm-spawn.sh <id> projects/<repo> --scout     # scout task; records kind=scout in meta
 ```
 
-The script resolves the harness (`fm-harness.sh crew`), owns the verified launch templates, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; a non-flag third argument containing whitespace is treated as a raw launch command (only for verifying new adapters).
+The script resolves the harness (`fm-harness.sh crew`), owns the verified launch templates, resolves the project's delivery mode (`fm-project-mode.sh`), and records `harness=`, `kind=`, `mode=`, and `yolo=` in the task's meta; on the tmux backend only, a non-flag third argument containing whitespace is treated as a raw launch command for verifying new adapters.
 
-The script creates the window (in your current tmux session, or a dedicated `firstmate` session when you are outside tmux), runs `treehouse get`, waits for the worktree subshell, installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief.
-Worktrees start at detached HEAD on a clean default branch; ship briefs tell the crewmate to create its branch, while scout briefs keep the worktree scratch.
-After spawning, peek the pane to confirm the crewmate is processing the brief (and handle any trust dialog per section 4).
+The script creates the visible crew session through the configured backend. In tmux mode it creates a tmux window, runs `treehouse get`, waits for the worktree subshell, installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief. In Orca mode it creates an Orca-managed worktree and launches the agent with the brief, recording the Orca worktree id and terminal handle in meta. In Codex App mode, shell cannot create the visible Desktop thread by itself: `fm-spawn` prepares `state/<id>.meta`, prints the host-tool action to take, and the firstmate must use Codex App thread tools to create or fork the visible thread, send the brief, and then record the returned `thread_id` with `bin/fm-codex-app record-thread`.
+Worktrees start from a clean default-branch base. The exact attachment is backend-specific: tmux/treehouse may use detached HEAD, Orca creates an attached task branch, and Codex App owns its own visible thread/worktree state through the Desktop app. Ship briefs tell the crewmate to create or reset its `fm/<id>` branch, while scout briefs keep the worktree scratch. For Codex App ship tasks, record the app-owned worktree path if it is available; teardown refuses ship cleanup unless that path belongs to the project, is on `fm/<id>`, and passes the usual landed-work checks, unless the captain explicitly approves discard.
+After spawning, peek or read the visible session to confirm the crewmate is processing the brief (and handle any trust dialog per section 4). For Codex App tasks, use `read_thread` rather than app-server output.
 Add the task to `data/backlog.md` under In flight.
+
+### Codex App visible thread protocol
+
+`FM_BACKEND=codex-app` means real Codex Desktop threads, not `codex app-server` headless sessions.
+The shell helper `bin/fm-codex-app` is a local ledger and safety guard; it does not create, read, steer, interrupt, or archive app-owned threads.
+
+When dispatching a Codex App task:
+
+1. Run `bin/fm-spawn.sh <id> projects/<repo> codex` as usual. It prepares `state/<id>.meta` and names the target thread `fm-<id>`.
+2. For a project task that does not need the current Firstmate thread context, use Codex App `create_thread` against the saved project with a worktree environment and the crewmate brief as the initial prompt.
+3. For a task that should inherit the current completed conversation context, use `fork_thread` first, then `send_message_to_thread` with the crewmate brief. Forks copy completed history only; active turns are not copied.
+4. If Codex App returns a pending worktree id before a thread id, run `bin/fm-codex-app record-pending <id> <pendingWorktreeId>` and finish recording once the visible thread exists.
+5. Rename the visible thread to `fm-<id>` with `set_thread_title` if the create/fork path did not already do it. Pin with `set_thread_pinned` only when the captain or task flow benefits from it.
+6. Run `bin/fm-codex-app record-thread <id> <thread-id>` once the visible thread id exists. Include `--worktree <path>` only if Codex App exposes the app-owned worktree path.
+7. To adopt a visible thread the captain already created or intervened in, choose a task id and run `bin/fm-codex-app adopt-thread <id> <thread-id> <project-path> --kind <ship|scout>` with `--worktree <path>` if available.
+8. Steer with `send_message_to_thread`, inspect with `read_thread` and `list_threads`, and hand off existing visible threads with `handoff_thread` when the captain asks to move work between checkout/worktree/host.
+9. To tear down, archive through `set_thread_archived(threadId=<thread-id>, archived=true)`, then run `bin/fm-codex-app mark-archived <id>`, then `bin/fm-teardown.sh <id>`. Scout teardown still requires `data/<id>/report.md`; ship teardown still requires landed work or explicit discard approval.
+
+Use `bin/fm-codex-app record-capture <id> <file|->` only as a convenience cache after `read_thread`; it is not the source of truth.
 
 ### Supervise
 
 Covered by section 8.
-Steer a crewmate only with short single lines via `bin/fm-send.sh`; anything long belongs in a file the crewmate can read.
+Steer a crewmate only with short single lines: use `bin/fm-send.sh` for tmux and Orca sessions, and `send_message_to_thread` for Codex App threads.
+Anything long belongs in a file the crewmate can read.
 
 ### Delivery modes and yolo
 
@@ -337,6 +365,8 @@ For example, with claude:
 ```sh
 bin/fm-send.sh fm-<id> '/no-mistakes'
 ```
+
+For Codex App tasks, send the same validation instruction with `send_message_to_thread` instead; `bin/fm-send.sh` intentionally refuses app-owned threads and prints the host-tool action to take.
 
 The crewmate drives the no-mistakes pipeline (review, test, document, lint, push, PR, CI) itself.
 It fixes auto-fix findings on its own.
@@ -372,7 +402,7 @@ A scout task follows Intake, Spawn, and Supervise exactly as above - scaffold th
 - Tear down immediately - no merge gate. `bin/fm-teardown.sh` allows a scout worktree's scratch commits and dirty files once the report exists; if the report is missing, it refuses, because the findings are the work product.
 - Record it in Done with the report path instead of a PR link.
 
-**Promotion.** When a scout's findings reveal shippable work (a reproduced bug with a clear fix) and the captain wants it shipped, promote the task in place instead of respawning: run `bin/fm-promote.sh <id>` (flips `kind=` to ship in meta, restoring teardown's full protection), then send the crewmate its ship instructions - inventory scratch state, reset to a clean default-branch base, carry over only intended fix changes, create branch `fm/<id>`, implement, and report `done` according to the project's delivery mode.
+**Promotion.** When a scout's findings reveal shippable work (a reproduced bug with a clear fix) and the captain wants it shipped, promote the task in place instead of respawning: run `bin/fm-promote.sh <id>` (flips `kind=` to ship in meta, restoring teardown's full protection), then send the crewmate its ship instructions - inventory scratch state, reset to a clean default-branch base, carry over only intended fix changes, create or reset branch `fm/<id>`, implement, and report `done` according to the project's delivery mode.
 The crewmate keeps its worktree, loaded context, and repro, but the ship branch must start from a clean base with only intended changes; scratch commits and debug edits from the scout phase never ride along.
 The repro becomes the regression test.
 From there the task is an ordinary ship task through its mode-specific validation, PR or local merge, and Teardown.
@@ -394,16 +424,17 @@ On wake, in order of cheapness:
 
 1. Read the reason line.
 2. `signal:` read the listed status files first; a wake lists every signal that landed within the coalescing grace window (e.g. a status write plus the same turn's turn-end marker), and each is ~30 tokens and usually sufficient.
-3. `stale:` the crewmate stopped without reporting; peek the pane (`bin/fm-peek.sh <window>`) to diagnose.
+3. `stale:` the crewmate stopped without reporting; peek the session (`bin/fm-peek.sh fm-<id>`) to diagnose.
 4. `check:` a per-task poll fired (usually a merge); act on it.
-5. `heartbeat:` review the whole fleet: skim each window's status file, peek panes that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then restart the watcher.
+5. `heartbeat:` review the whole fleet: skim each task's status file, peek sessions that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then restart the watcher.
    A heartbeat with no captain-relevant change is internal; do not report that the fleet is unchanged.
 
 Heartbeats back off exponentially while they are the only wakes firing (600s doubling to a 2h cap - an idle fleet stops burning turns); any signal, stale, or check wake resets the cadence to the base interval.
 Due per-task checks run before signal scanning so chatty crewmate status updates cannot starve slow polls like merge detection.
 
-Never rely on hooks or status files alone; the heartbeat review of every window is mandatory and unconditional.
-tmux is the ground truth.
+Never rely on hooks or status files alone; the heartbeat review of every recorded crew session is mandatory and unconditional.
+The configured backend is the ground truth for visible crew state.
+For `codex-app`, the Codex Desktop thread tools are the ground truth; `fm-peek` can show only cached captures, `fm-send` refuses with the host-tool action to take, and `fm-teardown` refuses until app archive and worktree safety are recorded.
 
 **Watcher liveness is guarded, not just disciplined.**
 Restarting the watcher is the last action of every wake-handling turn - but the protocol no longer relies on remembering that.
@@ -417,15 +448,15 @@ Whenever one or more tasks are in flight, do not run long foreground-blocking op
 This includes your own no-mistakes pipeline, long builds, and any other multi-minute command.
 Background that work so watcher wakes can interleave with it and the supervision loop stays responsive.
 
-Token discipline: status files before panes; default peeks to 40 lines; never stream a pane repeatedly through yourself; batch what you tell the captain.
-The context-% shown in a peek is not actionable as crew health; ignore it and intervene only on real signals (`signal`, `stale`, `needs-decision`, `blocked`), looping or confusion in the pane, or a question the brief already answers.
+Token discipline: status files before session peeks; default peeks to 40 lines; never stream a session repeatedly through yourself; batch what you tell the captain.
+The context-% shown in a peek is not actionable as crew health; ignore it and intervene only on real signals (`signal`, `stale`, `needs-decision`, `blocked`), looping or confusion in the session, or a question the brief already answers.
 Silence is the correct state while a healthy background watcher is waiting.
 
 ### Stuck-crewmate playbook (escalate in order)
 
-1. Peek the pane.
-2. Crewmate is waiting on a question its brief already answers: answer in one line via fm-send.
-3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the window's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh <window> --key Escape`), then redirect with one corrective line.
+1. Peek the session.
+2. Crewmate is waiting on a question its brief already answers: answer in one line via `bin/fm-send.sh` for tmux/Orca or `send_message_to_thread` for Codex App.
+3. Crewmate is confused or looping: interrupt with the adapter's interrupt key (the task's harness is recorded as `harness=` in `state/<id>.meta`; e.g. `bin/fm-send.sh fm-<id> --key Escape` for tmux/Orca; for Codex App, interrupt from Codex Desktop or use `handoff_thread` when moving a running thread), then redirect with one corrective line.
 4. Crewmate is genuinely wedged after redirection: exit the agent with the adapter's exit command, relaunch with the same brief plus a `progress so far` note you append to it.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.

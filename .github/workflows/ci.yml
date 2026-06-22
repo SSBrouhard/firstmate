@@ -17,6 +17,15 @@ jobs:
       - uses: actions/checkout@v6
       - run: shellcheck bin/*.sh
 
+  tests:
+    name: Backend contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash -n bin/*.sh test/*.test.sh
+      - run: node --check bin/fm-codex-app
+      - run: for t in test/*.test.sh; do "$t"; done
+
   invariants:
     name: Repo invariants
     runs-on: ubuntu-latest

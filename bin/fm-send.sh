@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Send one line of literal text to a crewmate window, then Enter.
-# Usage: fm-send.sh <window> <text...>
-#   <window> may be a bare window name (fm-xyz) or session:window.
-# Special keys instead of text: fm-send.sh <window> --key Escape   (or Enter, C-c, ...)
+# Send one line of literal text to a crewmate backend session.
+# Usage: fm-send.sh <selector> <text...>
+#   <selector> may be fm-xyz, a tmux session:window, or a backend thread id.
+# Special keys instead of text: fm-send.sh <selector> --key Escape   (or Enter, C-c, ...)
+#   Codex App threads are app-owned: this refuses and prints the Codex Desktop
+#   host-tool action instead of sending from shell.
 set -eu
 
-"$(dirname "${BASH_SOURCE[0]}")/fm-guard.sh" || true
+FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/fm-backend.sh
+. "$FM_ROOT/bin/fm-backend.sh"
+"$FM_ROOT/bin/fm-guard.sh" || true
 
-resolve() {
-  case "$1" in
-    *:*) echo "$1" ;;
-    *) tmux list-windows -a -F '#{session_name}:#{window_name}' | grep -m1 ":$1\$" \
-         || { echo "error: no window named $1" >&2; exit 1; } ;;
-  esac
-}
-
-T=$(resolve "$1")
+META=$(fm_backend_meta_for_selector "$1" || true)
+if [ -z "$META" ]; then
+  # Backward-compatible tmux fallback for ad hoc windows with no meta.
+  T=$(fm_backend_tmux_resolve "$1")
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-send-meta.XXXXXX")
+  printf 'backend=tmux\nwindow=%s\n' "$T" > "$tmp"
+  META=$tmp
+fi
 shift
 
 if [ "${1:-}" = "--key" ]; then
-  tmux send-keys -t "$T" "$2"
+  fm_backend_send_key "$META" "$2"
 else
-  tmux send-keys -t "$T" -l "$*"
-  # Slash commands open a completion popup in some TUIs (verified on codex);
-  # submitting too fast selects nothing. Give popups time to settle.
-  case "$*" in /*) sleep 1.2 ;; *) sleep 0.3 ;; esac
-  tmux send-keys -t "$T" Enter
+  fm_backend_send_text "$META" "$*"
 fi

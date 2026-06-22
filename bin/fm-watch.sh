@@ -3,13 +3,15 @@
 # Blocks until supervision work is due, then exits printing one reason line:
 #   signal: <file>...     a crewmate wrote a status line or a turn-end hook fired; signals
 #                         landing within FM_SIGNAL_GRACE of each other coalesce into one wake
-#   stale: <window>       a crewmate pane stopped changing and shows no busy signature
+#   stale: <session>      a crewmate session stopped changing and shows no busy signature
 #   check: <script>: <out> a per-task check script (e.g. merged-PR poll) produced output
 #   heartbeat              fleet review due; starts at FM_HEARTBEAT and backs off to FM_HEARTBEAT_MAX
 # Run as a background task. Restart it after handling each wake.
 set -u
 
 FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=bin/fm-backend.sh
+. "$FM_ROOT/bin/fm-backend.sh"
 STATE="$FM_ROOT/state"
 mkdir -p "$STATE"
 
@@ -22,8 +24,9 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
 # Busy signatures per harness, OR-ed. Extend via env when new adapters are verified.
-# claude/codex: "esc to interrupt"; opencode: "esc interrupt"; pi: "Working..."
-BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working\.\.\.'}
+# claude/codex: "esc to interrupt"; opencode: "esc interrupt"; pi: "Working...";
+# optional Codex App cached captures may include "codex-app status: active".
+BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working\.\.\.|codex-app status: active'}
 
 hash_pane() {
   if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
@@ -127,11 +130,14 @@ EOF
     wake "signal:$files"
   fi
 
-  # Layer 1 backbone: pane staleness. Two consecutive identical hashes with no busy
+  # Layer 1 backbone: terminal staleness. Two consecutive identical hashes with no busy
   # signature means the crewmate finished, is waiting, or is wedged. Each distinct
   # stale state is reported once (.stale-* remembers the hash already reported).
-  while IFS= read -r w; do
-    tail40=$(tmux capture-pane -p -t "$w" -S -40 2>/dev/null) || continue
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    w=$(fm_meta_get window "$meta")
+    [ -n "$w" ] || w=$(basename "$meta" .meta)
+    tail40=$(fm_backend_capture "$meta" 40 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
     hf="$STATE/.hash-$key"
@@ -154,7 +160,7 @@ EOF
       printf '%s' "$h" > "$hf"
       echo 0 > "$cf"
     fi
-  done < <(tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null | grep ':fm-' || true)
+  done
 
   # Heartbeat: firstmate reviews the whole fleet at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive
