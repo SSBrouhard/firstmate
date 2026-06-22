@@ -61,6 +61,10 @@ git_origin_url() {
   git -C "$1" remote get-url origin 2>/dev/null || true
 }
 
+is_git_worktree() {
+  [ -n "$1" ] && [ -d "$1" ] && git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 pr_url() {
   grep '^pr=' "$META" | cut -d= -f2- || true
 }
@@ -90,10 +94,8 @@ codex_app_pr_landed() {
   merge=$(gh pr view "$url" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || true)
   [ -n "$base" ] && [ -n "$merge" ] || return 1
 
-  default=$(default_branch 2>/dev/null || true)
-  if [ -n "$default" ] && [ "$base" != "$default" ]; then
-    return 1
-  fi
+  default=$(default_branch) || return 1
+  [ "$base" = "$default" ] || return 1
 
   git -C "$PROJ" fetch --quiet origin "$base" >/dev/null 2>&1 || true
   target="origin/$base"
@@ -109,24 +111,22 @@ if [ "$BACKEND" = codex-app ] && [ "$KIND" != scout ] && [ "$FORCE" != "--force"
     CODEX_APP_PR_LANDED=1
   fi
   if [ -z "$WT" ]; then
-    if [ "$CODEX_APP_PR_LANDED" = 1 ]; then
-      :
-    else
-    echo "REFUSED: Codex App ship task $ID has no known worktree path." >&2
-    echo "Firstmate cannot prove the work is landed or safe to discard. Record the app-owned worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
-    exit 1
+    if [ "$CODEX_APP_PR_LANDED" != 1 ]; then
+      echo "REFUSED: Codex App ship task $ID has no known worktree path." >&2
+      echo "Firstmate cannot prove the work is landed or safe to discard. Record the app-owned worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+      exit 1
     fi
-  fi
-  if [ ! -d "$WT" ] || ! git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    if [ "$CODEX_APP_PR_LANDED" = 1 ]; then
-      :
-    else
+  elif [ ! -d "$WT" ]; then
+    if [ "$CODEX_APP_PR_LANDED" != 1 ]; then
+      echo "REFUSED: Codex App ship task $ID has invalid worktree path: $WT" >&2
+      echo "Firstmate cannot prove the work is landed or safe to discard. Record a real app-owned git worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
+      exit 1
+    fi
+  elif ! is_git_worktree "$WT"; then
     echo "REFUSED: Codex App ship task $ID has invalid worktree path: $WT" >&2
     echo "Firstmate cannot prove the work is landed or safe to discard. Record a real app-owned git worktree path, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
     exit 1
-    fi
-  fi
-  if [ -d "$WT" ] && git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  else
     if ! same_project_repo "$WT" "$PROJ"; then
       echo "REFUSED: Codex App ship task $ID worktree does not belong to project $PROJ: $WT" >&2
       echo "Record the app-owned worktree for this project, merge/ship the work, or get the captain's explicit OK to discard, then --force." >&2
@@ -141,6 +141,12 @@ if [ "$BACKEND" = codex-app ] && [ "$KIND" != scout ] && [ "$FORCE" != "--force"
   fi
 fi
 
+if [ "$BACKEND" != codex-app ] && [ -n "$WT" ] && [ -d "$WT" ] && ! is_git_worktree "$WT" && [ "$FORCE" != "--force" ]; then
+  echo "REFUSED: task $ID has invalid worktree path: $WT" >&2
+  echo "Firstmate cannot prove the work is landed or safe to discard. Record a real git worktree path or get the captain's explicit OK to discard, then --force." >&2
+  exit 1
+fi
+
 if [ "$BACKEND" = codex-app ] && [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
   REPORT="$FM_ROOT/data/$ID/report.md"
   if [ ! -f "$REPORT" ]; then
@@ -150,7 +156,7 @@ if [ "$BACKEND" = codex-app ] && [ "$KIND" = scout ] && [ "$FORCE" != "--force" 
   fi
 fi
 
-if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
+if is_git_worktree "$WT" && [ "$FORCE" != "--force" ]; then
   if [ "$KIND" = scout ]; then
     # Scout worktrees are scratch by contract, but only once the deliverable exists.
     REPORT="$FM_ROOT/data/$ID/report.md"
@@ -194,7 +200,7 @@ if [ "$BACKEND" = codex-app ] && [ -n "$CODEX_APP_THREAD_ID" ] && [ "$CODEX_APP_
 fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
-if [ -d "$WT" ]; then
+if is_git_worktree "$WT"; then
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   if [ "$branch" != "HEAD" ]; then
     if git -C "$WT" checkout --detach -q 2>/dev/null; then
