@@ -205,7 +205,9 @@ if [ "$BACKEND" = codex-app ] && [ -n "$CODEX_APP_THREAD_ID" ] && [ "$CODEX_APP_
 fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
+WT_IS_GIT_WORKTREE=0
 if is_git_worktree "$WT"; then
+  WT_IS_GIT_WORKTREE=1
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   if [ "$branch" != "HEAD" ]; then
     if git -C "$WT" checkout --detach -q 2>/dev/null; then
@@ -214,32 +216,37 @@ if is_git_worktree "$WT"; then
   fi
   # Remove our hook file so a reused pool worktree cannot fire signals for a dead task.
   rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js"
-  case "$BACKEND" in
-    tmux)
+fi
+
+case "$BACKEND" in
+  tmux)
+    if [ "$WT_IS_GIT_WORKTREE" = 1 ]; then
       # Kills remaining processes in the worktree (including the agent), resets, returns
       # to pool. treehouse resolves the pool from the working directory, so run it from
       # the project.
       ( cd "$PROJ" && treehouse return --force "$WT" )
-      ;;
-    orca)
-      if [ -n "$ORCA_TERMINAL" ]; then
-        orca terminal close --terminal "$ORCA_TERMINAL" --json >/dev/null 2>&1 || true
-      fi
-      if [ -n "$ORCA_WORKTREE_ID" ]; then
-        orca worktree rm --worktree "id:$ORCA_WORKTREE_ID" --force --json >/dev/null
-      else
-        orca worktree rm --worktree "path:$WT" --force --json >/dev/null
-      fi
-      ;;
-    codex-app)
+    fi
+    ;;
+  orca)
+    if [ -n "$ORCA_TERMINAL" ]; then
+      orca terminal close --terminal "$ORCA_TERMINAL" --json >/dev/null 2>&1 || true
+    fi
+    if [ -n "$ORCA_WORKTREE_ID" ]; then
+      orca worktree rm --worktree "id:$ORCA_WORKTREE_ID" --force --json >/dev/null
+    elif [ -n "$WT" ]; then
+      orca worktree rm --worktree "path:$WT" --force --json >/dev/null
+    fi
+    ;;
+  codex-app)
+    if [ "$WT_IS_GIT_WORKTREE" = 1 ]; then
       case "$WT" in
         "$FM_ROOT/state/codex-app-worktrees/"*) git -C "$PROJ" worktree remove --force "$WT" >/dev/null ;;
         *) : ;; # App-owned worktrees are managed by Codex App, not this shell helper.
       esac
-      ;;
-    *) echo "REFUSED: unknown backend '$BACKEND' for task $ID." >&2; exit 1 ;;
-  esac
-fi
+    fi
+    ;;
+  *) echo "REFUSED: unknown backend '$BACKEND' for task $ID." >&2; exit 1 ;;
+esac
 
 if [ "$BACKEND" = tmux ]; then
   tmux kill-window -t "$T" 2>/dev/null || true
