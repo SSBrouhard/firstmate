@@ -69,6 +69,13 @@ pr_url() {
   grep '^pr=' "$META" | cut -d= -f2- || true
 }
 
+github_default_branch() {
+  local branch
+  branch=$(cd "$PROJ" && gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
+  [ -n "$branch" ] || return 1
+  printf '%s\n' "$branch"
+}
+
 same_project_repo() {
   local a=$1 b=$2 a_common b_common a_origin b_origin
   a_common=$(git_common_dir "$a" || true)
@@ -94,14 +101,12 @@ codex_app_pr_landed() {
   merge=$(gh pr view "$url" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || true)
   [ -n "$base" ] && [ -n "$merge" ] || return 1
 
-  default=$(default_branch) || return 1
+  default=$(github_default_branch) || return 1
   [ "$base" = "$default" ] || return 1
 
-  git -C "$PROJ" fetch --quiet origin "$base" >/dev/null 2>&1 || true
+  git -C "$PROJ" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" >/dev/null 2>&1 || return 1
   target="origin/$base"
-  if ! git -C "$PROJ" rev-parse --verify --quiet "$target" >/dev/null; then
-    target="$base"
-  fi
+  git -C "$PROJ" rev-parse --verify --quiet "$target^{commit}" >/dev/null || return 1
   git -C "$PROJ" merge-base --is-ancestor "$merge" "$target" >/dev/null 2>&1
 }
 

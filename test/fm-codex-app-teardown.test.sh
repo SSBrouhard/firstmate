@@ -71,21 +71,27 @@ git -C "$TMP/project" remote set-head origin -a >/dev/null 2>&1 || true
 git init "$TMP/no-default" >/dev/null
 git -C "$TMP/no-default" config user.email firstmate-test@example.com
 git -C "$TMP/no-default" config user.name Firstmate
-printf 'release\n' > "$TMP/no-default/README.md"
+printf 'main\n' > "$TMP/no-default/README.md"
 git -C "$TMP/no-default" add README.md
 git -C "$TMP/no-default" commit -m init >/dev/null
-git -C "$TMP/no-default" branch -M release
+git -C "$TMP/no-default" branch -M main
 git init --bare "$TMP/no-default-origin.git" >/dev/null
 git -C "$TMP/no-default" remote add origin "$TMP/no-default-origin.git"
-git -C "$TMP/no-default" push -u origin release >/dev/null 2>&1
+git -C "$TMP/no-default" push -u origin main >/dev/null 2>&1
+git -C "$TMP/no-default" checkout -b release >/dev/null 2>&1
+printf 'release\n' > "$TMP/no-default/release.txt"
+git -C "$TMP/no-default" add release.txt
+git -C "$TMP/no-default" commit -m release >/dev/null
+git -C "$TMP/no-default" checkout main >/dev/null 2>&1
 UNKNOWN_DEFAULT_COMMIT=$(git -C "$TMP/no-default" rev-parse HEAD)
 
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<EOF
 #!/usr/bin/env bash
 case " \$* " in
+  *" repo view "*) case "\$(pwd)" in *"/no-default") printf 'release\n' ;; *) printf 'main\n' ;; esac ;;
   *" -q .state "*) printf 'MERGED\n' ;;
-  *"unknown-default"*" -q .baseRefName "*) printf 'release\n' ;;
+  *"unknown-default"*" -q .baseRefName "*) printf 'main\n' ;;
   *"unknown-default"*" -q .mergeCommit.oid "*) printf '$UNKNOWN_DEFAULT_COMMIT\n' ;;
   *" -q .baseRefName "*) printf 'main\n' ;;
   *" -q .mergeCommit.oid "*) printf '$MERGED_COMMIT\n' ;;
