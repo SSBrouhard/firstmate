@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Switch the local backend profile used for future Firstmate spawns.
+set -u
+
+FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FORCE=0
+BACKEND=""
+
+usage() {
+  cat <<'EOF'
+usage: fm-backend-use [--force] <tmux|orca|codex-app>
+
+Switch Firstmate's local backend profile for future crewmates.
+
+The switch writes config/backends/<backend>.env if needed, then copies that
+profile to config/backend.env. Existing crewmates keep the backend recorded in
+their state/<id>.meta file.
+
+By default this refuses to switch while state/*.meta tasks are active. Use
+--force only when you have intentionally reconciled those tasks.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    -*)
+      echo "error: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [ -n "$BACKEND" ]; then
+        echo "error: expected one backend, got extra argument: $1" >&2
+        usage >&2
+        exit 2
+      fi
+      BACKEND=$1
+      shift
+      ;;
+  esac
+done
+
+[ -n "$BACKEND" ] || { usage >&2; exit 2; }
+
+case "$BACKEND" in
+  tmux|orca|codex-app) ;;
+  *) echo "error: unsupported backend '$BACKEND' (expected tmux, orca, or codex-app)" >&2; exit 2 ;;
+esac
+
+active=()
+for meta in "$FM_ROOT/state"/*.meta; do
+  [ -e "$meta" ] || continue
+  active+=("$(basename "$meta" .meta)")
+done
+
+if [ "${#active[@]}" -gt 0 ] && [ "$FORCE" -ne 1 ]; then
+  echo "error: refusing to switch backend while tasks are active: ${active[*]}" >&2
+  echo "hint: teardown or reconcile active tasks first, or rerun with --force if you intend future tasks only." >&2
+  exit 1
+fi
+
+if [ -n "${FM_BACKEND:-}" ] && [ "$FM_BACKEND" != "$BACKEND" ]; then
+  echo "warning: current shell has FM_BACKEND=$FM_BACKEND, which overrides config/backend.env" >&2
+fi
+
+if [ -s "$FM_ROOT/config/backend" ]; then
+  current_simple=$(tr -d '[:space:]' < "$FM_ROOT/config/backend" 2>/dev/null || true)
+  if [ -n "$current_simple" ] && [ "$FORCE" -ne 1 ]; then
+    echo "error: config/backend is set to '$current_simple' and overrides profile switching" >&2
+    echo "hint: remove config/backend or rerun with --force to clear it." >&2
+    exit 1
+  fi
+  if [ -n "$current_simple" ]; then
+    : > "$FM_ROOT/config/backend"
+  fi
+fi
+
+mkdir -p "$FM_ROOT/config/backends"
+profile="$FM_ROOT/config/backends/$BACKEND.env"
+if [ ! -f "$profile" ]; then
+  printf 'FM_BACKEND=%s\n' "$BACKEND" > "$profile"
+fi
+
+profile_backend=$(
+  grep -E '^[[:space:]]*FM_BACKEND=' "$profile" 2>/dev/null \
+    | tail -1 \
+    | cut -d= -f2- \
+    | tr -d '[:space:]' \
+    | sed 's/^["'\'']//;s/["'\'']$//'
+)
+
+if [ "$profile_backend" != "$BACKEND" ]; then
+  echo "error: profile $profile sets FM_BACKEND=$profile_backend, expected $BACKEND" >&2
+  exit 1
+fi
+
+tmp=$(mktemp "$FM_ROOT/config/backend.env.XXXXXX") || exit 1
+cp "$profile" "$tmp"
+mv "$tmp" "$FM_ROOT/config/backend.env"
+
+printf 'backend switched: %s\n' "$BACKEND"
+"$FM_ROOT/bin/fm-backend-current"

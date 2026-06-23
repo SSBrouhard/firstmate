@@ -150,6 +150,8 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but the watcher liveness beacon is stale or missing                                   |
 | `fm-backend.sh`          | Shared backend helpers for tmux, Orca, and Codex App runtime operations                                            |
+| `fm-backend-current`     | Show the effective local backend, its config source, available profiles, and active task backend records           |
+| `fm-backend-use`         | Switch the local backend profile used for future crewmates; refuses while tasks are active unless forced           |
 | `fm-codex-app`           | Dependency-free Codex App visible-thread ledger used to record thread ids, captures, pending worktrees, and archive state |
 | `fm-codex-app-smoke-check.sh` | Validate visible-thread smoke evidence so headless app-server turns cannot pass as Codex App backend success    |
 | `fm-spawn.sh`            | Create a backend session/worktree, or prepare a Codex App visible-thread handoff; records ship/scout task kind     |
@@ -171,6 +173,17 @@ The shared orchestrator behavior lives in `AGENTS.md` - edit it like any prompt 
 Personal preferences for one captain's fleet live locally in `data/captain.md`; it is gitignored and read after `data/projects.md` during bootstrap.
 Harness support is a table in section 4: claude, codex, opencode, and pi are all empirically verified; new harnesses get verified through a supervised trial task before joining the table.
 Backend selection can live in `FM_BACKEND`, `config/backend`, or `config/backend.env`, in that precedence order.
+For day-to-day local backend switching, prefer profiles:
+
+```sh
+bin/fm-backend-current
+bin/fm-backend-use orca
+bin/fm-backend-use codex-app
+```
+
+`fm-backend-use` writes `config/backends/<backend>.env` and activates it by copying that profile to `config/backend.env`.
+It affects future spawns only; existing crewmates keep the backend recorded in their `state/<id>.meta`.
+By default it refuses to switch while tasks are active, so an Orca day and a Codex App day do not accidentally cross streams.
 
 Runtime tuning via environment variables (defaults shown):
 

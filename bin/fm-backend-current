@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Print the effective Firstmate backend and the local config source that chose it.
+set -u
+
+FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+QUIET=0
+
+usage() {
+  cat <<'EOF'
+usage: fm-backend-current [--quiet]
+
+Print the effective Firstmate backend. With --quiet, print only the backend name.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --quiet|-q) QUIET=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+trim_file() {
+  tr -d '[:space:]' < "$1" 2>/dev/null || true
+}
+
+backend_from_env_file() {
+  local file=$1 line
+  [ -f "$file" ] || return 1
+  line=$(grep -E '^[[:space:]]*FM_BACKEND=' "$file" 2>/dev/null | tail -1 || true)
+  [ -n "$line" ] || return 1
+  line=${line#*=}
+  line=${line%\"}
+  line=${line#\"}
+  line=${line%\'}
+  line=${line#\'}
+  line=$(printf '%s' "$line" | tr -d '[:space:]')
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line"
+}
+
+source="default"
+backend="tmux"
+if [ -n "${FM_BACKEND:-}" ]; then
+  backend=$FM_BACKEND
+  source="environment:FM_BACKEND"
+elif [ -s "$FM_ROOT/config/backend" ] && [ -n "$(trim_file "$FM_ROOT/config/backend")" ]; then
+  backend=$(trim_file "$FM_ROOT/config/backend")
+  source="config/backend"
+elif env_backend=$(backend_from_env_file "$FM_ROOT/config/backend.env"); then
+  backend=$env_backend
+  source="config/backend.env"
+fi
+
+if [ "$QUIET" -eq 1 ]; then
+  printf '%s\n' "$backend"
+  exit 0
+fi
+
+printf 'backend: %s\n' "$backend"
+printf 'source: %s\n' "$source"
+
+if [ -d "$FM_ROOT/config/backends" ]; then
+  profiles=$(find "$FM_ROOT/config/backends" -maxdepth 1 -type f -name '*.env' -exec basename {} .env \; | sort | paste -sd, - | sed 's/,/, /g')
+  [ -n "$profiles" ] && printf 'profiles: %s\n' "$profiles"
+fi
+
+if [ -s "$FM_ROOT/config/backend" ] && [ -f "$FM_ROOT/config/backend.env" ]; then
+  printf 'note: config/backend overrides config/backend.env\n'
+fi
+
+count=0
+for meta in "$FM_ROOT/state"/*.meta; do
+  [ -e "$meta" ] || continue
+  count=$((count + 1))
+done
+printf 'active_tasks: %s\n' "$count"
+
+for meta in "$FM_ROOT/state"/*.meta; do
+  [ -e "$meta" ] || continue
+  id=$(basename "$meta" .meta)
+  task_backend=$(grep '^backend=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)
+  window=$(grep '^window=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)
+  printf '  %s backend=%s window=%s\n' "$id" "${task_backend:-unknown}" "${window:-unknown}"
+done
