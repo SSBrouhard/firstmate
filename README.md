@@ -99,6 +99,7 @@ If the captain already has a visible thread on deck, firstmate can adopt it with
 This is intentionally not `codex app-server`: app-server can complete headless turns without creating visible, persisted Desktop threads.
 `fm-peek` can show cached `read_thread` captures, `fm-send` refuses with the host-tool action to take, `fm-watch` still wakes on status files, and `fm-teardown` requires app archive plus landed-work proof. If the app-owned worktree is gone after a merge, the recorded PR state and merge commit become the safety proof.
 This backend runs the Codex harness only; use Orca or tmux for mixed harness fleets.
+Known issues and the Codex App backend roadmap live in `docs/codex-app-backend-roadmap.md`.
 
 ## How It Works
 
