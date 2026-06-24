@@ -6,7 +6,10 @@
 set -eu
 
 FILE=${1:-}
-[ -n "$FILE" ] && [ -f "$FILE" ] || { echo "usage: fm-codex-app-smoke-check.sh <transcript-file>" >&2; exit 2; }
+if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+  echo "usage: fm-codex-app-smoke-check.sh <transcript-file>" >&2
+  exit 2
+fi
 
 require() {
   local key=$1

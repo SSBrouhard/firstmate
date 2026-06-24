@@ -89,7 +89,9 @@ is_git_worktree() {
 
 github_default_branch() {
   local branch
-  branch=$(cd "$PROJ" && gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
+  if ! branch=$(cd "$PROJ" && gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null); then
+    return 1
+  fi
   [ -n "$branch" ] || return 1
   printf '%s\n' "$branch"
 }
