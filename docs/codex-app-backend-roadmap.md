@@ -21,6 +21,9 @@ down. The remaining work is mostly deterministic lifecycle polish.
   teardown safety checks.
 - Codex Desktop owns thread actions: create, fork, send, read, title, pin,
   archive, and handoff.
+- Completed Codex App tasks are archived before teardown, so their threads may
+  leave the normal sidebar/project list; that is expected lifecycle behavior,
+  not deletion of the merged PR, local merge, scout report, or backlog record.
 - Orca and tmux remain separate backends. Codex App work must not regress them.
 
 ## Issue Register
@@ -82,7 +85,8 @@ The Codex App backend is public-brief ready when all of these are true:
 - A fresh user can follow docs to create the Codex App project and switch
   Firstmate to `FM_BACKEND=codex-app`.
 - A scout task appears as a visible `fm-<id>` thread, writes a report, can be
-  read and steered, then archives cleanly.
+  read and steered, then archives cleanly; after archive it may leave the normal
+  sidebar without losing the report.
 - A ship task opens a PR, passes no-mistakes, merges, archives, tears down, and
   leaves no stale task state or task branches.
 - Restart recovery can reconcile an in-flight visible thread from local meta and
