@@ -220,6 +220,7 @@ FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
 FM_CHECK_INTERVAL=300   # seconds between slow checks (merged-PR polls)
 FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script
 FM_GUARD_GRACE=300      # seconds a stale watcher beacon may age before guard warnings
+FM_WATCHER_STALE_GRACE=300   # duplicate watcher lock grace; defaults to FM_GUARD_GRACE
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effort clone refresh
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
@@ -234,11 +235,19 @@ FM_SUPERVISOR_TARGET=firstmate:0   # supervisor tmux target (override; auto-disc
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_STALE_ESCALATE_SECS=240         # idle seconds before a stale pane escalates as a possible wedge
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
+FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status classifier
 FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
+FM_INJECT_FAIL_SLEEP=30            # seconds between retries after an injection failure
 FM_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once
 FM_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks
 FM_HEARTBEAT_SCAN_SECS=300         # cadence of the catch-all status scan for missed user-relevant status
 FM_HOUSEKEEPING_TICK=15            # seconds between batch-flush, stale-recheck, and scan passes
+FM_LOG_MAX_BYTES=1048576           # daemon log size cap before truncating
+FM_LOG_KEEP_LINES=2000             # daemon log lines retained after truncation
+FM_CRASH_THRESHOLD=10              # watcher crashes allowed inside FM_CRASH_WINDOW before backing off
+FM_CRASH_WINDOW=60                 # seconds for crash-loop detection
+FM_CRASH_BACKOFF=60                # seconds to sleep after crash-loop detection
+FM_CRASH_NORMAL_SLEEP=5            # seconds to sleep after a non-crash-loop watcher failure
 ```
 
 ## Development
@@ -251,9 +260,9 @@ The current watcher reliability work keeps the one-shot process model and adds a
 The presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) provides proactive wake routing for walk-away supervision via the `/afk` skill; a blocking-waiter split remains a deferred follow-up phase.
 
 ```sh
-bash -n bin/*.sh tests/*.test.sh test/*.test.sh               # syntax-check the toolbelt and tests
+git grep -l '^#!/usr/bin/env bash' -- bin tests test | xargs bash -n   # syntax-check every bash script, including extensionless helpers
 node --check bin/fm-codex-app                                # syntax-check the Codex App ledger
-shellcheck bin/*.sh tests/*.sh test/*.sh                     # lint the toolbelt and behavior tests; CI enforces this
+git grep -l '^#!/usr/bin/env bash' -- bin tests test | xargs shellcheck -x   # lint the toolbelt and behavior tests; CI enforces this
 for test_script in tests/*.test.sh test/*.test.sh; do "$test_script"; done   # behavior and backend contract tests, matching CI
 tests/fm-wake-queue.test.sh               # durable wake queue, singleton behavior, sub-supervisor classifier, /afk presence-gating, border-aware composer, max-defer, and fm-send submit tests
 tests/fm-composer-ghost.test.sh           # dim-ghost stripping, ghost-only composer detection, and escape-free peek tests

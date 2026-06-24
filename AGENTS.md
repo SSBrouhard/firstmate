@@ -595,6 +595,7 @@ So the next time you touch the fleet with queued wakes or no watcher alive, the 
 The grace window keeps normal handling (watcher briefly down between a wake and its re-arm) silent.
 If a guard warning says queued wakes are pending, drain them before doing anything else.
 If a guard warning says watcher liveness is stale, arm `bin/fm-watch.sh` after draining any queued wakes.
+Duplicate watcher invocations share the same portable lock and exit quietly while the live watcher heartbeat is fresh; `FM_WATCHER_STALE_GRACE` overrides that lock-staleness threshold and otherwise falls back to `FM_GUARD_GRACE` (default 300s).
 Watcher liveness is not enough if you are foreground-blocked.
 Whenever one or more tasks are in flight, do not run long foreground-blocking operations in your own session.
 This includes your own no-mistakes pipeline, long builds, and any other multi-minute command.
@@ -666,6 +667,7 @@ This is why fewer, cheaper firstmate turns handle the same fleet.
 
 **Reliability properties (must hold):** nothing is lost (the #29 queue plus `fm-wake-drain.sh` recover any missed/crashed injection); wedge detection is bounded-latency, not lossy; the catch-all scan backs up the keyword classifier; the daemon preserves single-instance portable lock, crash-loop backoff, a pane-gone guard, and a signal-trapped shutdown that flushes buffered escalations before exit.
 `FM_INJECT_SKIP` (default `heartbeat`) force-self-handles matching kinds, overriding classification - use sparingly.
+`FM_CAPTAIN_RE` overrides the captain-relevant status classifier; `FM_INJECT_FAIL_SLEEP`, `FM_LOG_MAX_BYTES`, `FM_LOG_KEEP_LINES`, and `FM_CRASH_THRESHOLD` / `FM_CRASH_WINDOW` / `FM_CRASH_BACKOFF` / `FM_CRASH_NORMAL_SLEEP` tune daemon retry, log, and crash-loop behavior.
 
 ### Stuck-crewmate playbook (escalate in order)
 

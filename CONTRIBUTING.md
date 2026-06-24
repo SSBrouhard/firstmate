@@ -39,7 +39,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   It does not make `data/` tracked.
 - Helper scripts in `bin/` are plain bash.
   Each starts with a usage header comment; keep it accurate when you change behavior.
-  `shellcheck bin/*.sh` must pass, and CI enforces it.
+  `git grep -l '^#!/usr/bin/env bash' -- bin tests test | xargs shellcheck -x` must pass, and CI enforces it.
 - Changes to harness adapters (launch templates in `bin/fm-spawn.sh`, the adapter tables in `AGENTS.md`) must be verified empirically against the real harness, never written from documentation alone.
 - Changes to visible backends must prove the actual backend contract.
   A completed app-server turn is not enough for `FM_BACKEND=codex-app`; visible Codex Desktop mode requires evidence from the app-owned thread path (`create_thread`/`fork_thread`, `read_thread`, `send_message_to_thread`, and archive state).
