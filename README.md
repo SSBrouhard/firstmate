@@ -36,6 +36,7 @@ There is no app to install; the whole orchestrator is an `AGENTS.md` file that a
   The first mate dispatches, supervises, escalates only real decisions, and reports plain outcomes about work that is ready, blocked, or needs your call.
 - **A visible crew** - every crewmate lives in a visible backend session: a tmux window by default, an Orca terminal when `FM_BACKEND=orca`, or a Codex Desktop thread when `FM_BACKEND=codex-app`.
   Watch any of them work, or type into that session to intervene; the first mate reconciles.
+  A crewmate may use bounded helper subagents for review, investigation, or test design, but the visible crewmate stays accountable for the task lifecycle.
 - **Persistent domain supervisors** - route natural-language scopes through `data/secondmates.md` when a domain deserves its own long-lived supervisor.
   Each secondmate has a separate `FM_HOME`, local state, local projects, and its own session lock, while the main first mate still supervises it like any other direct report.
 - **Guarded by construction** - the first mate is read-only over your projects except for clean local default-branch refreshes, safe pruning of local branches whose remote is gone, and approved `local-only` fast-forward merges; crewmates work in disposable backend-owned worktrees.
@@ -111,7 +112,7 @@ Secondmates still run through tmux because each persistent supervisor owns an is
     ▼              ▼               ▼
  ┌────────┐   ┌────────┐      ┌────────┐
  │fm-task1│   │fm-task2│  ... │fm-taskN│   visible sessions you can watch
- │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
+ │crewmate│   │crewmate│      │crewmate│   one accountable agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼
   backend worktree or isolated secondmate home
