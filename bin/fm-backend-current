@@ -2,7 +2,11 @@
 # Print the effective Firstmate backend and the local config source that chose it.
 set -u
 
-FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 QUIET=0
 
 usage() {
@@ -45,10 +49,10 @@ backend="tmux"
 if [ -n "${FM_BACKEND:-}" ]; then
   backend=$FM_BACKEND
   source="environment:FM_BACKEND"
-elif [ -s "$FM_ROOT/config/backend" ] && [ -n "$(trim_file "$FM_ROOT/config/backend")" ]; then
-  backend=$(trim_file "$FM_ROOT/config/backend")
+elif [ -s "$CONFIG/backend" ] && [ -n "$(trim_file "$CONFIG/backend")" ]; then
+  backend=$(trim_file "$CONFIG/backend")
   source="config/backend"
-elif env_backend=$(backend_from_env_file "$FM_ROOT/config/backend.env"); then
+elif env_backend=$(backend_from_env_file "$CONFIG/backend.env"); then
   backend=$env_backend
   source="config/backend.env"
 fi
@@ -60,24 +64,25 @@ fi
 
 printf 'backend: %s\n' "$backend"
 printf 'source: %s\n' "$source"
+printf 'home: %s\n' "$FM_HOME"
 
-if [ -d "$FM_ROOT/config/backends" ]; then
-  profiles=$(find "$FM_ROOT/config/backends" -maxdepth 1 -type f -name '*.env' -exec basename {} .env \; | sort | paste -sd, - | sed 's/,/, /g')
+if [ -d "$CONFIG/backends" ]; then
+  profiles=$(find "$CONFIG/backends" -maxdepth 1 -type f -name '*.env' -exec basename {} .env \; | sort | paste -sd, - | sed 's/,/, /g')
   [ -n "$profiles" ] && printf 'profiles: %s\n' "$profiles"
 fi
 
-if [ -s "$FM_ROOT/config/backend" ] && [ -f "$FM_ROOT/config/backend.env" ]; then
+if [ -s "$CONFIG/backend" ] && [ -f "$CONFIG/backend.env" ]; then
   printf 'note: config/backend overrides config/backend.env\n'
 fi
 
 count=0
-for meta in "$FM_ROOT/state"/*.meta; do
+for meta in "$STATE"/*.meta; do
   [ -e "$meta" ] || continue
   count=$((count + 1))
 done
 printf 'active_tasks: %s\n' "$count"
 
-for meta in "$FM_ROOT/state"/*.meta; do
+for meta in "$STATE"/*.meta; do
   [ -e "$meta" ] || continue
   id=$(basename "$meta" .meta)
   task_backend=$(grep '^backend=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)

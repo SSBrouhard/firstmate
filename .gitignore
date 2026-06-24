@@ -7,4 +7,5 @@ data/
 .env
 config/backend
 config/backend.env
+config/backends/
 config/crew-harness

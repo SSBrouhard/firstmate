@@ -15,16 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: shellcheck bin/*.sh
+      - run: shellcheck bin/*.sh tests/*.sh test/*.sh
 
   tests:
-    name: Backend contract tests
+    name: Behavior and backend tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: bash -n bin/*.sh test/*.test.sh
-      - run: node --check bin/fm-codex-app
-      - run: for t in test/*.test.sh; do "$t"; done
+      - run: |
+          set -eu
+          bash -n bin/*.sh tests/*.test.sh test/*.test.sh
+          node --check bin/fm-codex-app
+          for test_script in tests/*.test.sh test/*.test.sh; do
+            "$test_script"
+          done
 
   invariants:
     name: Repo invariants

@@ -31,9 +31,9 @@ grep -qx 'backend=codex-app' "$META"
 grep -qx 'window=fm-'"$ID" "$META"
 grep -qx 'codex_app_thread_state=pending' "$META"
 grep -qx 'codex_app_pending_action=create_thread_or_fork_thread' "$META"
-! grep -q '^thread_id=' "$META"
-! grep -q '^codex_app_runner_pid=' "$META"
-! grep -q '^codex_app_state=' "$META"
+if grep -q '^thread_id=' "$META"; then exit 1; fi
+if grep -q '^codex_app_runner_pid=' "$META"; then exit 1; fi
+if grep -q '^codex_app_state=' "$META"; then exit 1; fi
 printf 'thread_id=thread-enter\n' >> "$META"
 if FM_ROOT="$ROOT" bash -c '. "$1/bin/fm-backend.sh"; fm_backend_send_key "$2" Enter' bash "$ROOT" "$META" 2>"$TMP/enter.err"; then
   echo "expected Codex App Enter key send to fail through host-tool refusal" >&2
@@ -41,11 +41,15 @@ if FM_ROOT="$ROOT" bash -c '. "$1/bin/fm-backend.sh"; fm_backend_send_key "$2" E
 fi
 grep -q 'send_message_to_thread' "$TMP/enter.err"
 
-meta_line=$(grep -n '> "$FM_ROOT/state/$ID.meta"' "$ROOT/bin/fm-spawn.sh" | cut -d: -f1)
+# shellcheck disable=SC2016 # Literal source text is the contract under test.
+meta_line=$(grep -n '> "$STATE/$ID.meta"' "$ROOT/bin/fm-spawn.sh" | cut -d: -f1)
+# shellcheck disable=SC2016 # Literal source text is the contract under test.
 orca_launch_line=$(grep -n 'orca terminal send --terminal "$ORCA_TERMINAL" --text "$LAUNCH"' "$ROOT/bin/fm-spawn.sh" | cut -d: -f1)
+[ -n "$meta_line" ] && [ -n "$orca_launch_line" ]
 [ "$meta_line" -lt "$orca_launch_line" ]
 
 grep -q 'FM_ORCA_CODEX_AUTO_TRUST' "$ROOT/bin/fm-spawn.sh"
+# shellcheck disable=SC2016 # Literal source text is the contract under test.
 if grep -q 'codex\\*) fm_backend_trust_codex_project "$WT"' "$ROOT/bin/fm-spawn.sh"; then
   echo "Orca+Codex trust must be explicit opt-in" >&2
   exit 1

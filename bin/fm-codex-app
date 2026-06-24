@@ -23,7 +23,9 @@ function findRootFromCwd() {
 }
 
 const ROOT = process.env.FM_ROOT || findRootFromCwd() || path.resolve(__dirname, "..");
-const STATE = path.join(ROOT, "state");
+const HOME = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || ROOT;
+const DATA = process.env.FM_DATA_OVERRIDE || path.join(HOME, "data");
+const STATE = process.env.FM_STATE_OVERRIDE || path.join(HOME, "state");
 
 function usage() {
   console.error(`usage:
@@ -103,7 +105,7 @@ function resolveProjectMode(projectPath) {
   const fallback = { mode: "no-mistakes", yolo: "off" };
   if (!projectName) return fallback;
 
-  const registry = path.join(ROOT, "data", "projects.md");
+  const registry = path.join(DATA, "projects.md");
   let content;
   try {
     content = fs.readFileSync(registry, "utf8");

@@ -2,7 +2,11 @@
 # Switch the local backend profile used for future Firstmate spawns.
 set -u
 
-FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 FORCE=0
 BACKEND=""
 
@@ -50,7 +54,7 @@ case "$BACKEND" in
 esac
 
 active=()
-for meta in "$FM_ROOT/state"/*.meta; do
+for meta in "$STATE"/*.meta; do
   [ -e "$meta" ] || continue
   active+=("$(basename "$meta" .meta)")
 done
@@ -65,20 +69,20 @@ if [ -n "${FM_BACKEND:-}" ] && [ "$FM_BACKEND" != "$BACKEND" ]; then
   echo "warning: current shell has FM_BACKEND=$FM_BACKEND, which overrides config/backend.env" >&2
 fi
 
-if [ -s "$FM_ROOT/config/backend" ]; then
-  current_simple=$(tr -d '[:space:]' < "$FM_ROOT/config/backend" 2>/dev/null || true)
+if [ -s "$CONFIG/backend" ]; then
+  current_simple=$(tr -d '[:space:]' < "$CONFIG/backend" 2>/dev/null || true)
   if [ -n "$current_simple" ] && [ "$FORCE" -ne 1 ]; then
     echo "error: config/backend is set to '$current_simple' and overrides profile switching" >&2
     echo "hint: remove config/backend or rerun with --force to clear it." >&2
     exit 1
   fi
   if [ -n "$current_simple" ]; then
-    : > "$FM_ROOT/config/backend"
+    : > "$CONFIG/backend"
   fi
 fi
 
-mkdir -p "$FM_ROOT/config/backends"
-profile="$FM_ROOT/config/backends/$BACKEND.env"
+mkdir -p "$CONFIG/backends"
+profile="$CONFIG/backends/$BACKEND.env"
 if [ ! -f "$profile" ]; then
   printf 'FM_BACKEND=%s\n' "$BACKEND" > "$profile"
 fi
@@ -96,9 +100,9 @@ if [ "$profile_backend" != "$BACKEND" ]; then
   exit 1
 fi
 
-tmp=$(mktemp "$FM_ROOT/config/backend.env.XXXXXX") || exit 1
+tmp=$(mktemp "$CONFIG/backend.env.XXXXXX") || exit 1
 cp "$profile" "$tmp"
-mv "$tmp" "$FM_ROOT/config/backend.env"
+mv "$tmp" "$CONFIG/backend.env"
 
 printf 'backend switched: %s\n' "$BACKEND"
 "$FM_ROOT/bin/fm-backend-current"
