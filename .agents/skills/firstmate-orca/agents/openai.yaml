@@ -1,0 +1,4 @@
+interface:
+  display_name: "Firstmate Orca"
+  short_description: "Guardrails for Firstmate Orca backend work"
+  default_prompt: "Use $firstmate-orca to switch, spawn, supervise, or debug Firstmate tasks on the Orca backend."
