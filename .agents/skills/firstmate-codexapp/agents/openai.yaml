@@ -1,0 +1,4 @@
+interface:
+  display_name: "Firstmate Codex App"
+  short_description: "Dispatch visible Codex App crewmates cleanly"
+  default_prompt: "Use $firstmate-codexapp to dispatch visible Codex App crewmates without crossing worktrees or watcher state."
