@@ -6,8 +6,26 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const ROOT = process.env.FM_ROOT || path.resolve(__dirname, "..");
-const STATE = path.join(ROOT, "state");
+function looksLikeFleetRoot(dir) {
+  return fs.existsSync(path.join(dir, "state"))
+    && fs.existsSync(path.join(dir, "data"))
+    && fs.existsSync(path.join(dir, "bin", "fm-codex-app"));
+}
+
+function findRootFromCwd() {
+  let dir = process.cwd();
+  while (true) {
+    if (looksLikeFleetRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+const ROOT = process.env.FM_ROOT || findRootFromCwd() || path.resolve(__dirname, "..");
+const HOME = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || ROOT;
+const DATA = process.env.FM_DATA_OVERRIDE || path.join(HOME, "data");
+const STATE = process.env.FM_STATE_OVERRIDE || path.join(HOME, "state");
 
 function usage() {
   console.error(`usage:
@@ -87,7 +105,7 @@ function resolveProjectMode(projectPath) {
   const fallback = { mode: "no-mistakes", yolo: "off" };
   if (!projectName) return fallback;
 
-  const registry = path.join(ROOT, "data", "projects.md");
+  const registry = path.join(DATA, "projects.md");
   let content;
   try {
     content = fs.readFileSync(registry, "utf8");

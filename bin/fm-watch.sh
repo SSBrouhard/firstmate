@@ -3,17 +3,61 @@
 # Blocks until supervision work is due, then exits printing one reason line:
 #   signal: <file>...     a crewmate wrote a status line or a turn-end hook fired; signals
 #                         landing within FM_SIGNAL_GRACE of each other coalesce into one wake
-#   stale: <session>      a crewmate session stopped changing and shows no busy signature
+#   stale: <window>       a crewmate pane stopped changing and shows no busy signature
 #   check: <script>: <out> a per-task check script (e.g. merged-PR poll) produced output
 #   heartbeat              fleet review due; starts at FM_HEARTBEAT and backs off to FM_HEARTBEAT_MAX
-# Run as a background task. Restart it after handling each wake.
+# Run as a background task. Re-arm it after handling each wake; duplicate
+# invocations no-op through the watcher singleton lock.
 set -u
 
-FM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=bin/fm-backend.sh
-. "$FM_ROOT/bin/fm-backend.sh"
-STATE="$FM_ROOT/state"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 mkdir -p "$STATE"
+
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
+
+WATCH_LOCK="$STATE/.watch.lock"
+WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
+if ! fm_lock_try_acquire "$WATCH_LOCK"; then
+  BEAT="$STATE/.last-watcher-beat"
+  if [ -n "${FM_LOCK_HELD_PID:-}" ]; then
+    if [ -e "$BEAT" ]; then
+      beat_age=$(fm_path_age "$BEAT")
+      if [ "$beat_age" -ge "$WATCHER_STALE_GRACE" ]; then
+        echo "watcher: lock held by live pid $FM_LOCK_HELD_PID but heartbeat is stale for ${beat_age}s (>${WATCHER_STALE_GRACE}s); inspect or stop that watcher before re-arming." >&2
+        exit 1
+      fi
+    elif [ "$(fm_path_age "$WATCH_LOCK")" -ge "$WATCHER_STALE_GRACE" ]; then
+      echo "watcher: lock held by live pid $FM_LOCK_HELD_PID but no heartbeat exists; inspect or stop that watcher before re-arming." >&2
+      exit 1
+    fi
+    echo "watcher: already running pid $FM_LOCK_HELD_PID"
+  else
+    echo "watcher: already running"
+  fi
+  exit 0
+fi
+trap 'fm_lock_release "$WATCH_LOCK"' EXIT
+
+# Portable stat. macOS (BSD) stat uses `-f <fmt>`; Linux (GNU) stat uses `-c <fmt>`.
+# Do NOT use the `stat -f <fmt> ... || stat -c <fmt> ...` fallback form: on Linux
+# `stat -f` is *filesystem* stat and writes a partial filesystem dump ("File: ...",
+# "Blocks: ...") to stdout before failing, so the fallback's correct output gets
+# appended to that garbage. Arithmetic under `set -u` then aborts on the stray
+# token (e.g. the word "File" read as an unset variable), which silently kills the
+# watcher mid-cycle. Detect the platform once and pick the right form.
+if [ "$(uname)" = Darwin ]; then
+  stat_mtime() { stat -f %m "$1" 2>/dev/null; }        # epoch seconds of mtime
+  stat_sig()   { stat -f '%z:%Fm' "$1" 2>/dev/null; }   # size:mtime signature
+else
+  stat_mtime() { stat -c %Y "$1" 2>/dev/null; }
+  stat_sig()   { stat -c '%s:%Y' "$1" 2>/dev/null; }
+fi
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat wakes
@@ -24,12 +68,39 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
 # Busy signatures per harness, OR-ed. Extend via env when new adapters are verified.
-# claude/codex: "esc to interrupt"; opencode: "esc interrupt"; pi: "Working...";
-# optional Codex App cached captures may include "codex-app status: active".
+# claude/codex: "esc to interrupt"; opencode: "esc interrupt"; pi: "Working..."
 BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working\.\.\.|codex-app status: active'}
 
 hash_pane() {
   if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
+}
+
+window_kind() {
+  local w=$1 meta mw kind
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    mw=$(grep '^window=' "$meta" | cut -d= -f2- || true)
+    [ "$mw" = "$w" ] || continue
+    kind=$(grep '^kind=' "$meta" | cut -d= -f2- || true)
+    [ -n "$kind" ] || kind=ship
+    echo "$kind"
+    return 0
+  done
+  echo unknown
+}
+
+recorded_windows() {
+  local meta w seen=
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    w=$(grep '^window=' "$meta" | cut -d= -f2- || true)
+    [ -n "$w" ] || continue
+    case "$seen" in
+      *"|$w|"*) continue ;;
+    esac
+    seen="$seen|$w|"
+    printf '%s\n' "$w"
+  done
 }
 
 # Exit reporting a wake. Consecutive heartbeats with no other wake in between
@@ -49,7 +120,7 @@ wake() {
 # a busy fleet. Persist the schedule as file mtimes instead.
 age_of() {  # seconds since file mtime; "due immediately" if missing
   local f=$1 m
-  m=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null) || { echo 999999; return; }
+  m=$(stat_mtime "$f") || { echo 999999; return; }
   echo $(( $(date +%s) - m ))
 }
 
@@ -66,7 +137,7 @@ scan_signals() {
   local f sig sf
   for f in "$STATE"/*.status "$STATE"/*.turn-ended; do
     [ -e "$f" ] || continue
-    sig=$(stat -f '%z:%Fm' "$f" 2>/dev/null || stat -c '%s:%Y' "$f" 2>/dev/null) || continue
+    sig=$(stat_sig "$f") || continue
     sf="$STATE/.seen-$(basename "$f" | tr '.' '_')"
     if [ "$sig" != "$(cat "$sf" 2>/dev/null)" ]; then
       printf '%s\t%s\t%s\n' "$sf" "$sig" "$f"
@@ -100,14 +171,17 @@ while :; do
   # never run until the fleet went quiet. Checks are due only every
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
-    touch "$STATE/.last-check"
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
       out=$(run_check "$c")
       if [ -n "$out" ]; then
-        wake "check: $c: $out"
+        reason="check: $c: $out"
+        fm_wake_append check "$c" "$reason" || exit 1
+        touch "$STATE/.last-check"
+        wake "$reason"
       fi
     done
+    touch "$STATE/.last-check"
   fi
 
   # On the first changed signal, linger one grace period and re-scan before
@@ -122,21 +196,36 @@ while :; do
     files=""
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
-      printf '%s' "$sig" > "$sf"
       case " $files " in *" $f "*) ;; *) files="$files $f" ;; esac
     done <<EOF
 $pending
 EOF
-    wake "signal:$files"
+    reason="signal:$files"
+    while IFS=$(printf '\t') read -r sf sig f; do
+      [ -n "$sf" ] || continue
+      fm_wake_append signal "$(basename "$f")" "$reason" || exit 1
+    done <<EOF
+$pending
+EOF
+    while IFS=$(printf '\t') read -r sf sig f; do
+      [ -n "$sf" ] || continue
+      printf '%s' "$sig" > "$sf"
+    done <<EOF
+$pending
+EOF
+    wake "$reason"
   fi
 
-  # Layer 1 backbone: terminal staleness. Two consecutive identical hashes with no busy
+  # Layer 1 backbone: pane staleness. Two consecutive identical hashes with no busy
   # signature means the crewmate finished, is waiting, or is wedged. Each distinct
   # stale state is reported once (.stale-* remembers the hash already reported).
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
-    w=$(fm_meta_get window "$meta")
+    w=$(grep '^window=' "$meta" | cut -d= -f2- || true)
     [ -n "$w" ] || w=$(basename "$meta" .meta)
+    # A secondmate idling on its own watcher is healthy. Its parent supervises
+    # it through status writes and heartbeats, not pane-idle staleness.
+    [ "$(window_kind "$w")" = secondmate ] && continue
     tail40=$(fm_backend_capture "$meta" 40 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
@@ -152,6 +241,7 @@ EOF
       # strings in displayed content cannot suppress stale detection.
       if [ "$n" -ge 2 ] && ! printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 | grep -qiE "$BUSY_REGEX"; then
         if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
+          fm_wake_append stale "$w" "stale: $w" || exit 1
           printf '%s' "$h" > "$sf"
           wake "stale: $w"
         fi
@@ -170,6 +260,7 @@ EOF
   hb=$(( HEARTBEAT * (1 << streak) ))
   [ "$hb" -gt "$HEARTBEAT_MAX" ] && hb=$HEARTBEAT_MAX
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
+    fm_wake_append heartbeat heartbeat heartbeat || exit 1
     touch "$STATE/.last-heartbeat"
     wake "heartbeat"
   fi

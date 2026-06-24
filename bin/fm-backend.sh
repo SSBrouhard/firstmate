@@ -7,18 +7,32 @@ fm_backend_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
 
+fm_backend_home() {
+  local root=${FM_ROOT:-$(fm_backend_root)}
+  printf '%s\n' "${FM_HOME:-${FM_ROOT_OVERRIDE:-$root}}"
+}
+
+fm_backend_config_dir() {
+  printf '%s\n' "${FM_CONFIG_OVERRIDE:-$(fm_backend_home)/config}"
+}
+
+fm_backend_state_dir() {
+  printf '%s\n' "${FM_STATE_OVERRIDE:-$(fm_backend_home)/state}"
+}
+
 fm_backend_name() {
-  local root=${FM_ROOT:-$(fm_backend_root)} cfg line
+  local config cfg line
+  config=$(fm_backend_config_dir)
   if [ -n "${FM_BACKEND:-}" ]; then
     echo "$FM_BACKEND"
     return 0
   fi
-  if [ -f "$root/config/backend" ]; then
-    cfg=$(tr -d '[:space:]' < "$root/config/backend" || true)
+  if [ -f "$config/backend" ]; then
+    cfg=$(tr -d '[:space:]' < "$config/backend" || true)
     [ -n "$cfg" ] && { echo "$cfg"; return 0; }
   fi
-  if [ -f "$root/config/backend.env" ]; then
-    line=$(grep -E '^[[:space:]]*FM_BACKEND=' "$root/config/backend.env" 2>/dev/null | tail -1 || true)
+  if [ -f "$config/backend.env" ]; then
+    line=$(grep -E '^[[:space:]]*FM_BACKEND=' "$config/backend.env" 2>/dev/null | tail -1 || true)
     line=${line#*=}
     line=${line%\"}
     line=${line#\"}
@@ -114,8 +128,8 @@ NODE
 }
 
 fm_backend_meta_for_selector() {
-  local selector=$1 root=${FM_ROOT:-$(fm_backend_root)} state meta base win thread_id
-  state="$root/state"
+  local selector=$1 state meta base win thread_id
+  state=$(fm_backend_state_dir)
   base=${selector#fm-}
   if [ -f "$state/$base.meta" ]; then
     echo "$state/$base.meta"
@@ -191,15 +205,30 @@ if (r.terminal && Array.isArray(r.terminal.tail)) {
 }
 
 fm_backend_send_text() {
-  local meta=$1 text=$2 backend target terminal thread_id root
+  local meta=$1 text=$2 backend target terminal thread_id root verdict retries sleep_s settle
   backend=$(fm_meta_get backend "$meta")
   [ -n "$backend" ] || backend=tmux
   case "$backend" in
     tmux)
       target=$(fm_meta_get window "$meta")
-      tmux send-keys -t "$target" -l "$text"
-      case "$text" in /*) sleep 1.2 ;; *) sleep 0.3 ;; esac
-      tmux send-keys -t "$target" Enter
+      case "$text" in /*) settle=1.2 ;; *) settle=0.3 ;; esac
+      if [ "$(type -t fm_tmux_submit_core 2>/dev/null || true)" != function ]; then
+        # shellcheck source=bin/fm-tmux-lib.sh
+        . "${FM_ROOT:-$(fm_backend_root)}/bin/fm-tmux-lib.sh"
+      fi
+      retries=${FM_SEND_RETRIES:-3}
+      sleep_s=${FM_SEND_SLEEP:-0.4}
+      verdict=$(fm_tmux_submit_core "$target" "$text" "$retries" "$sleep_s" "$settle")
+      case "$verdict" in
+        pending)
+          echo "error: text not submitted to $target (Enter swallowed; text left in composer)" >&2
+          return 1
+          ;;
+        send-failed)
+          echo "error: text not sent to $target (tmux send-keys failed)" >&2
+          return 1
+          ;;
+      esac
       ;;
     orca)
       terminal=$(fm_meta_get terminal "$meta")
