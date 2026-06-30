@@ -142,6 +142,7 @@ Secondmates still run through tmux because each persistent supervisor owns an is
   The same project may appear in multiple secondmate homes when their scopes differ, such as issue triage versus feature development.
   Secondmates are idle by default: after startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
   Bootstrap and secondmate spawn locally fast-forward live secondmate homes to the primary firstmate version when safe, then propagate inheritable local config (`config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend`) so their own crews, dispatch profiles, and backlog backend use the same settings.
+  For mid-session config-only convergence, `bin/fm-config-push.sh` pushes those inherited config files to live secondmate homes without fast-forwarding tracked files or nudging agents.
   After seeding a secondmate, `fm-backlog-handoff.sh` moves already-judged in-scope queued items from the main backlog into that secondmate home so the domain queue starts in the right place.
   Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless discard has been explicitly approved with `--force`.
 - **X mode is opt-in** - a gitignored `FMX_PAIRING_TOKEN` lets the watcher check path answer owner-routed public `@myfirstmate` mentions and normal reversible lifecycle asks, with `FMX_DRY_RUN` available to test the poll -> compose -> would-post loop without publishing.
