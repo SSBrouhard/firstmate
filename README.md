@@ -148,6 +148,7 @@ Secondmates still run through tmux because each persistent supervisor owns an is
 - **X mode is opt-in** - a gitignored `FMX_PAIRING_TOKEN` lets the watcher check path answer owner-routed public `@myfirstmate` mentions and normal reversible lifecycle asks, with `FMX_DRY_RUN` available to test the poll -> compose -> would-post loop without publishing.
   Destructive, irreversible, or security-sensitive asks still need trusted-channel confirmation.
   Long public replies stay text-only and split into bounded numbered threads when needed.
+  A reply can attach one local image when there is a visual artifact; threaded replies attach the image only to the opener.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
   `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
 - **Project memory belongs to projects** - durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a symlink.
