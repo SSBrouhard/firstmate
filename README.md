@@ -129,6 +129,7 @@ Secondmates still run through tmux because each persistent supervisor owns an is
   A presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) extends this for walk-away supervision: the `/afk` skill activates it, after which it self-handles routine wakes in bash and escalates only user-relevant events as one batched, single-line digest (prefixed with an in-band sentinel marker so firstmate can tell daemon injections apart from real messages).
   Its injection path shares `bin/fm-tmux-lib.sh` with `fm-send.sh`, so dim-ghost-aware and border-aware composer detection plus verified submit retry stay consistent; stalled escalation delivery raises `state/.subsuper-inject-wedged` after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 - **Worktrees, not branches in your checkout** - crewmates never touch your clone; tmux uses treehouse pools, Orca uses Orca-managed worktrees, and Codex App owns its visible thread/worktree state.
+- **Dispatch profiles are optional** - crewmate dispatch can stay on a static `config/crew-harness` or use natural-language local profiles in `config/crew-dispatch.json` to choose a per-task harness, model, and effort.
 - **Two task shapes** - ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks investigate, plan, reproduce bugs, or audit, then leave a report at `data/<id>/report.md` and never push.
 - **Optional secondmates** - `data/secondmates.md` records persistent domain supervisors with natural-language scopes, project clone lists, and home paths.
   `fm-home-seed.sh` provisions the isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the tmux and status-file path.
@@ -139,9 +140,12 @@ Secondmates still run through tmux because each persistent supervisor owns an is
   `local-only` projects stay with the main first mate because they merge into the main local checkout instead of a remote-backed PR path.
   The same project may appear in multiple secondmate homes when their scopes differ, such as issue triage versus feature development.
   Secondmates are idle by default: after startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
-  Bootstrap and secondmate spawn locally fast-forward live secondmate homes to the primary firstmate version when safe, then propagate inheritable local config (`config/crew-harness` and `config/backlog-backend`) so their own crews use the same settings.
+  Bootstrap and secondmate spawn locally fast-forward live secondmate homes to the primary firstmate version when safe, then propagate inheritable local config (`config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend`) so their own crews, dispatch profiles, and backlog backend use the same settings.
   After seeding a secondmate, `fm-backlog-handoff.sh` moves already-judged in-scope queued items from the main backlog into that secondmate home so the domain queue starts in the right place.
   Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless discard has been explicitly approved with `--force`.
+- **X mode is opt-in** - a gitignored `FMX_PAIRING_TOKEN` lets the watcher check path answer owner-routed public `@myfirstmate` mentions and normal reversible lifecycle asks, with `FMX_DRY_RUN` available to test the poll -> compose -> would-post loop without publishing.
+  Destructive, irreversible, or security-sensitive asks still need trusted-channel confirmation.
+  Long public replies stay text-only and split into bounded numbered threads when needed.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
   `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
 - **Project memory belongs to projects** - durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a symlink.
