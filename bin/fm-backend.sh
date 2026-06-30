@@ -205,13 +205,20 @@ if (r.terminal && Array.isArray(r.terminal.tail)) {
 }
 
 fm_backend_send_text() {
-  local meta=$1 text=$2 backend target terminal thread_id root verdict retries sleep_s settle
+  local meta=$1 text=$2 backend target terminal thread_id root verdict retries sleep_s settle harness
   backend=$(fm_meta_get backend "$meta")
   [ -n "$backend" ] || backend=tmux
   case "$backend" in
     tmux)
       target=$(fm_meta_get window "$meta")
-      case "$text" in /*) settle=1.2 ;; *) settle=0.3 ;; esac
+      harness=$(fm_meta_get harness "$meta")
+      case "$text" in
+        /*) settle=1.2 ;;
+        \$*)
+          if [ "$harness" = codex ]; then settle=1.2; else settle=0.3; fi
+          ;;
+        *) settle=0.3 ;;
+      esac
       if [ "$(type -t fm_tmux_submit_core 2>/dev/null || true)" != function ]; then
         # shellcheck source=bin/fm-tmux-lib.sh
         . "${FM_ROOT:-$(fm_backend_root)}/bin/fm-tmux-lib.sh"

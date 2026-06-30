@@ -3,15 +3,24 @@
 # its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> [harness|launch-command] [--scout]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [harness|launch-command] --secondmate
-#   With no harness arg, the harness comes from fm-harness.sh crew (config/crew-harness,
-#   falling back to firstmate's own harness). A bare adapter name (claude|codex|
-#   opencode|pi) overrides it for this spawn. A non-flag string containing whitespace
-#   is treated as a RAW launch command - the escape hatch for verifying new adapters.
-#   FM_BACKEND=orca creates an Orca worktree/terminal; FM_BACKEND=codex-app
-#   prepares app-owned visible thread metadata for Codex Desktop host tools.
+#   With no harness arg, the harness comes from fm-harness.sh: a crewmate/scout
+#   spawn resolves the CREW harness (config/crew-harness, falling back to firstmate's
+#   own); a --secondmate spawn resolves the SECONDMATE harness (config/secondmate-harness
+#   -> config/crew-harness -> own), so the secondmate-vs-crewmate split is DURABLE
+#   across every respawn (recovery, /updatefirstmate, restart). A bare adapter name
+#   (claude|codex|opencode|pi|grok) overrides it for this spawn (either kind). A
+#   non-flag string containing whitespace is treated as a RAW launch command - the
+#   escape hatch for verifying new adapters.
+#   A --secondmate spawn also propagates the primary's declared inheritable config
+#   into the secondmate home's config/, so the secondmate's OWN crewmates and
+#   backlog backend inherit the primary's settings (fm-config-inherit-lib.sh).
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
-#   see AGENTS.md section 7); --secondmate records kind=secondmate and launches in a
+#   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
+#   Before a secondmate launch, the home is locally fast-forwarded to the primary
+#   default-branch commit when safe; skipped syncs warn and launch unchanged.
+#   Ship/scout spawns refuse to launch after treehouse get unless the resolved pane
+#   path is a real git worktree root distinct from the primary project checkout.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -25,6 +34,8 @@
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 # Per-harness turn-end hooks are installed automatically; some live outside the worktree.
+# grok uses a firstmate-owned global hook under ${GROK_HOME:-$HOME/.grok}/hooks
+# plus a gitignored .fm-grok-turnend worktree pointer and a state token.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<session:window> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
 # secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
@@ -36,7 +47,12 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SUB_HOME_MARKER=".fm-secondmate-home"
+# shellcheck source=bin/fm-ff-lib.sh
+. "$SCRIPT_DIR/fm-ff-lib.sh"
+# shellcheck source=bin/fm-config-inherit-lib.sh
+. "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
@@ -86,7 +102,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi)
+    ''|claude|codex|opencode|pi|grok)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -108,7 +124,7 @@ else
 fi
 
 # The verified launch command per adapter. The knowledge half of each adapter
-# (busy signature, exit command, dialogs, quirks) lives in AGENTS.md section 4.
+# (busy signature, exit command, dialogs, quirks) lives in the harness-adapters skill.
 launch_template() {
   local harness=$1 kind=${2:-ship}
   # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
@@ -116,7 +132,7 @@ launch_template() {
     # CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false disables claude's interactive
     # predicted-next-prompt ghost text, which renders as dim/faint text inside an
     # otherwise-empty composer and would otherwise read like real typed input when
-    # firstmate captures the pane (see AGENTS.md section 4). It is a per-launch env
+    # firstmate captures the pane (see the harness-adapters skill). It is a per-launch env
     # prefix scoped to this firstmate-launched agent; it never touches the captain's
     # global config. The CLI's --prompt-suggestions flag is print/SDK-mode only and
     # does NOT suppress the interactive ghost text (verified empirically), so the env
@@ -138,6 +154,14 @@ launch_template() {
         printf '%s' 'pi -e __PIEXT__ "$(cat __BRIEF__)"'
       fi
       ;;
+    # grok (Grok Build TUI): a positional prompt starts the supervised interactive
+    # session. --always-approve auto-approves every tool execution (verified: the
+    # crewmate runs fully autonomously, no permission gate), which an unattended
+    # crewmate needs; it is the targeted equivalent of claude's
+    # --dangerously-skip-permissions. grok's turn-end signal does NOT ride the
+    # launch command - it is a Stop-event hook installed below (global hook +
+    # per-task pointer), so the template is identical for ship/scout/secondmate.
+    grok) printf '%s' 'grok --always-approve "$(cat __BRIEF__)"' ;;
     *) return 1 ;;
   esac
 }
@@ -151,8 +175,21 @@ case "$ARG3" in
     done
     ;;
   '')
-    HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from config/crew-harness or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
+    # No explicit harness: resolve from config. A secondmate AGENT launches on the
+    # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
+    # every other kind uses the crew harness. Resolving here on every spawn is what
+    # makes the split DURABLE - a respawn (recovery, /updatefirstmate, restart)
+    # re-resolves, so config/secondmate-harness keeps governing secondmate launches
+    # across restarts. The launch_template lookup below is the unverified-adapter
+    # guard for both kinds: a harness with no template aborts the spawn.
+    if [ "$KIND" = secondmate ]; then
+      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
+      harness_src='config/secondmate-harness (falling back to config/crew-harness)'
+    else
+      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
+      harness_src='config/crew-harness'
+    fi
+    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
     ;;
   *)
     HARNESS=$ARG3
@@ -179,6 +216,10 @@ shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
   printf "'"
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 resolved_existing_dir() {
@@ -304,6 +345,35 @@ if [ "$KIND" = secondmate ]; then
   [ -n "$FIRSTMATE_HOME" ] || { echo "error: no firstmate home supplied or registered for $ID" >&2; exit 1; }
   PROJ_ABS=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME")
   WT="$PROJ_ABS"
+  # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
+  # PRIMARY checkout's current default-branch commit, so a freshly spawned or
+  # recovery-respawned secondmate always runs the primary's version (AGENTS.md
+  # spawn section). Purely local - no fetch: the home is a worktree of this same
+  # repo and already holds the commit. ff-only and guarded; a dirty, diverged, or
+  # wrong-branch home is left untouched and launches as-is. The agent re-reads
+  # AGENTS.md fresh on launch, so no nudge is needed here.
+  if sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
+    sm_ff_out=$(ff_target "$PROJ_ABS" "secondmate $ID" "$sm_primary_head" yes yes 2>&1 || true)
+    case "$sm_ff_out" in
+      *': skipped:'*)
+        sm_ff_line=$(first_line "$sm_ff_out")
+        sm_ff_prefix="secondmate $ID: skipped: "
+        sm_ff_reason=${sm_ff_line#"$sm_ff_prefix"}
+        echo "warning: secondmate $ID sync skipped before launch: $sm_ff_reason" >&2
+        ;;
+    esac
+  else
+    echo "warning: secondmate $ID sync skipped before launch: primary default-branch commit cannot be resolved" >&2
+  fi
+  # Inheritable-config propagation: push the primary's declared LOCAL config into
+  # this secondmate home's config/, so the secondmate's OWN crewmates and backlog
+  # backend inherit the primary's settings. config/ is gitignored, so this is a
+  # separate copy from the local-HEAD fast-forward above;
+  # primary-authoritative and re-pushed on every convergence. config/secondmate-harness
+  # is the primary's own knob and is deliberately NOT in the inheritable set
+  # (fm-config-inherit-lib.sh). A primary with no inheritable config set is a no-op.
+  propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
+    || echo "warning: secondmate $ID config inheritance failed for $PROJ_ABS/config" >&2
   if [ -f "$PROJ_ABS/data/charter.md" ]; then
     BRIEF="$PROJ_ABS/data/charter.md"
   else
@@ -357,6 +427,31 @@ case "$BACKEND" in
         echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
         exit 1
       fi
+
+      # Isolation guard: refuse to launch unless WT is a genuine, ISOLATED worktree -
+      # a real git worktree root, distinct from the project's primary checkout
+      # (PROJ_ABS). Firstmate is a treehouse-pooled repo of itself, so a treehouse-get
+      # misfire can leave the pane in (or in a subdir of, or a symlink to) the primary
+      # checkout; branching/committing there would tangle the primary onto a feature
+      # branch (see fm-tangle-lib.sh). The wait loop above only proves the pane left
+      # PROJ_ABS's exact path; this proves it landed in a true, separate worktree.
+      wt_real=
+      if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
+        wt_real=
+      fi
+      proj_real=
+      if ! proj_real=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P); then
+        proj_real=
+      fi
+      wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null || true)
+      wt_top_real=
+      if ! wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P); then
+        wt_top_real=
+      fi
+      if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
+        echo "error: treehouse get did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect window $T" >&2
+        exit 1
+      fi
     fi
     ;;
   orca)
@@ -399,10 +494,20 @@ EOF
   *) echo "error: unknown FM_BACKEND '$BACKEND' (expected tmux, orca, or codex-app)" >&2; exit 1 ;;
 esac
 
+# Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
+# create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
+# Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
+# later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
+# targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
+TASK_TMP="/tmp/fm-$ID"
+mkdir -p "$TASK_TMP/gotmp"
+
 # Per-harness turn-end hook: a file that touches state/<id>.turn-ended when the
 # agent finishes a turn. Worktree-resident hooks are kept out of git's view so
 # they never block teardown's dirty check or leak into a commit.
-TURNEND="$STATE/$ID.turn-ended"
+mkdir -p "$STATE"
+STATE_REAL=$(cd "$STATE" && pwd -P)
+TURNEND="$STATE_REAL/$ID.turn-ended"
 exclude_path() {
   local rel=$1 EXCL
   EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)
@@ -448,6 +553,55 @@ EOF
     codex*)
       # codex: turn-end rides the launch command via -c notify=[...] and __TURNEND__.
       ;;
+    grok*)
+      # grok fires a Stop hook at every turn boundary (verified, grok 0.2.73), the
+      # clean equivalent of codex's notify= and pi's turn_end. But grok only loads
+      # PROJECT hooks (<worktree>/.grok/hooks/, <worktree>/.claude/settings.local.json)
+      # after the folder is granted hook-trust, which is not automatic and which
+      # firstmate cannot establish at launch without editing grok's own managed
+      # trust store (a high-blast-radius write). GLOBAL hooks in ~/.grok/hooks/ are
+      # always trusted and load on first launch with no gate. So the turn-end hook
+      # lives OUTSIDE the worktree as a single firstmate-owned global hook that is a
+      # guarded no-op for every non-firstmate grok session: it fires only when the
+      # current workspace holds a .fm-grok-turnend token pointer that matches the
+      # firstmate-owned hook registry. firstmate then drops that per-task pointer
+      # (gitignored, like the other harnesses' worktree hook files).
+      # Result: the hook is outside the worktree, needs no trust grant, and never
+      # touches grok's managed config - only firstmate-owned files.
+      GROK_HOOKS_DIR="${GROK_HOME:-$HOME/.grok}/hooks"
+      GROK_AUTH_DIR="$GROK_HOOKS_DIR/fm-turn-end.d"
+      mkdir -p "$GROK_AUTH_DIR"
+      old_umask=$(umask)
+      umask 077
+      auth_file=$(mktemp "$GROK_AUTH_DIR/fm.XXXXXXXXXXXX")
+      umask "$old_umask"
+      printf '%s\n' "$TURNEND" > "$auth_file"
+      printf '%s\n' "${auth_file##*/}" > "$STATE/$ID.grok-turnend-token"
+      sq_grok_auth_dir=$(shell_quote "$GROK_AUTH_DIR")
+      cat > "$GROK_HOOKS_DIR/fm-turn-end.sh" <<EOF
+#!/usr/bin/env bash
+set -u
+auth_dir=$sq_grok_auth_dir
+workspace=\${GROK_WORKSPACE_ROOT:-}
+[ -n "\$workspace" ] || exit 0
+p="\$workspace/.fm-grok-turnend"
+[ -f "\$p" ] || exit 0
+first=
+IFS= read -r -n 256 first < "\$p" 2>/dev/null || [ -n "\$first" ] || exit 0
+case "\$first" in token=*) token=\${first#token=} ;; *) exit 0 ;; esac
+case "\$token" in fm.????????????) : ;; *) exit 0 ;; esac
+case "\$token" in *[!A-Za-z0-9._-]*) exit 0 ;; esac
+t=\$(cat "\$auth_dir/\$token" 2>/dev/null) || exit 0
+case "\$t" in /*.turn-ended) : ;; *) exit 0 ;; esac
+touch "\$t" 2>/dev/null || true
+exit 0
+EOF
+      chmod +x "$GROK_HOOKS_DIR/fm-turn-end.sh"
+      hook_command=$(json_escape "bash $(shell_quote "$GROK_HOOKS_DIR/fm-turn-end.sh")")
+      printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$hook_command" > "$GROK_HOOKS_DIR/fm-turn-end.json"
+      printf 'token=%s\n' "${auth_file##*/}" > "$WT/.fm-grok-turnend"
+      exclude_path '.fm-grok-turnend'
+      ;;
   esac
 fi
 
@@ -479,7 +633,7 @@ EOF
   [ -n "$ORCA_TERMINAL" ] || { echo "error: Orca did not return a terminal handle" >&2; exit 1; }
 fi
 
-# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md sections 6-7).
+# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md project management and task lifecycle).
 # Recorded in meta so fm-teardown's safety check and the validate/merge stages can
 # branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
 # merge, so scout teardown ignores mode.
@@ -495,7 +649,6 @@ $("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 EOF
 fi
 
-mkdir -p "$STATE"
 {
   echo "backend=$BACKEND"
   echo "window=$T"
@@ -505,6 +658,7 @@ mkdir -p "$STATE"
   echo "kind=$KIND"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
+  echo "tasktmp=$TASK_TMP"
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
@@ -531,12 +685,18 @@ if [ "$KIND" = secondmate ]; then
 fi
 case "$BACKEND" in
   tmux)
+    # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
+    # process (go build, go test, ...) inherit it. Sent before the launch command so
+    # the env is set when the agent starts; the brief sleep lets the export land.
+    tmux send-keys -t "$T" "export GOTMPDIR=$TASK_TMP/gotmp" Enter
+    sleep 0.3
     tmux send-keys -t "$T" -l "$LAUNCH"
     sleep 0.3
     tmux send-keys -t "$T" Enter
     echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO backend=$BACKEND window=$T worktree=$WT"
     ;;
   orca)
+    orca terminal send --terminal "$ORCA_TERMINAL" --text "export GOTMPDIR=$TASK_TMP/gotmp" --enter --json >/dev/null
     orca terminal send --terminal "$ORCA_TERMINAL" --text "$LAUNCH" --enter --json >/dev/null
     echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO backend=$BACKEND window=$T worktree=$WT"
     ;;

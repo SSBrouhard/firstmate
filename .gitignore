@@ -9,3 +9,6 @@ config/backend
 config/backend.env
 config/backends/
 config/crew-harness
+config/secondmate-harness
+config/backlog-backend
+config/x-mode.env
