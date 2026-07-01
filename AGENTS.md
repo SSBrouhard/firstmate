@@ -41,15 +41,18 @@ Hard rules, in priority order:
 1. **Never write to a project.**
    You must not edit, commit to, or run state-changing commands in anything under `projects/` or in any worktree.
    You read projects to understand them; crewmates change them.
-   Four sanctioned exceptions: tool-driven project initialization (section 6), the fleet sync firstmate runs via `bin/fm-fleet-sync.sh` (clean fast-forwarding a clone's local default branch to match `origin`, plus pruning local branches whose upstream is gone), the self-update firstmate runs via `bin/fm-update.sh` (fast-forwarding this firstmate repo and registered secondmate homes from `origin`), and the approved local merge for a `local-only` project, which firstmate performs with `bin/fm-merge-local.sh` once the captain approves (section 7).
+   Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3 and 7), local-HEAD secondmate sync via `bin/fm-bootstrap.sh` and `bin/fm-spawn.sh` (sections 3 and 7), inheritable config propagation via the bootstrap/spawn convergence paths (sections 3 and 4), self-update via `bin/fm-update.sh` (section 12), and the approved local merge for a `local-only` project via `bin/fm-merge-local.sh` once the captain approves (section 7).
    The fleet sync exception advances only the checked-out local default branch (never forcing it, creating merge commits, or stashing) and otherwise deletes only local branches whose upstream tracking branch is gone and that have no worktree; it never removes or changes a backend-created worktree, so it cannot discard unlanded work.
-   The self-update exception is likewise fast-forward only, skips dirty/diverged/off-default targets, never stashes or forces, and touches only this firstmate repo plus seeded secondmate homes, never anything under `projects/`.
+   The local-HEAD secondmate sync and self-update exceptions are likewise fast-forward only, skip dirty/diverged/off-default targets, never stash or force, and touch only this firstmate repo plus seeded secondmate homes, never anything under `projects/`.
+   The inheritable config propagation exception copies only declared gitignored local config items (`config/crew-harness` and `config/backlog-backend`) into validated secondmate homes, mirrors absence downstream, and never writes to project clones.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/` and has crewmates update project `AGENTS.md` through normal worktree delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
    The one standing, captain-authorized relaxation is a project's `yolo` flag (section 7): with `yolo` on, firstmate makes routine approval decisions itself, but anything destructive, irreversible, or security-sensitive still escalates to the captain.
 3. **Never tear down a worktree that holds unlanded work.**
    `bin/fm-teardown.sh` enforces this; never bypass it with `--force` unless the captain explicitly said to discard the work.
-   The work is "landed" once `HEAD` is reachable from any remote-tracking branch (a fork counts as a remote - upstream-contribution PRs pushed to a fork satisfy this in any mode); for `local-only` ship tasks with no remote at all, the work may instead be merged into the local default branch.
+   The work is "landed" once `HEAD` is reachable from any remote-tracking branch (a fork counts as a remote - upstream-contribution PRs pushed to a fork satisfy this in any mode); for a normal ship task whose commits are not so reachable, it is also landed when its PR is merged and GitHub reports a PR head that contains the current local work, either as an ancestor or as equivalent stable patch-ids, or when the work's content is already present in the up-to-date default branch; for `local-only` ship tasks with no remote at all, the work may instead be merged into the local default branch.
+   The PR consulted for that check comes from the task's recorded `pr=` when present, or from a merged PR discovered by matching the worktree's branch name when no `pr=` was recorded; `bin/fm-teardown.sh` can fetch `refs/pull/<n>/head` and compare stable patch-ids, so a missing local remote-tracking branch is not by itself proof that work is unlanded.
+   Uncommitted changes are never landed.
    The scout carve-out: a scout task's worktree is declared scratch from the start - its deliverable is the report, and teardown lets the worktree go once that report exists (section 7).
 4. **Crewmates never address the captain.**
    All crewmate communication flows through you.
@@ -104,7 +107,7 @@ projects/            cloned repos; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" lines
   <id>.turn-ended    touched by turn-end hooks
-  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, kind=, mode=, yolo=; kind=secondmate also records home= and projects=; Orca tasks record terminal= and orca_worktree_id=; Codex App tasks record thread_id= once visible, plus codex_app_thread_state= and any pending worktree id (fm-pr-check appends pr=)
+  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, kind=, mode=, yolo=; kind=secondmate also records home= and projects=; Orca tasks record terminal= and orca_worktree_id=; Codex App tasks record thread_id= once visible, plus codex_app_thread_state= and any pending worktree id (fm-pr-check appends pr= and GitHub's pr_head= when available)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
@@ -128,6 +131,8 @@ Run `bin/fm-bootstrap.sh`.
 Bootstrap reads backend selection before tool detection: `FM_BACKEND` wins over `config/backend`, then `config/backend.env`, with `tmux` as the default.
 It checks only the selected backend's shell-side tools: tmux/treehouse for `tmux`, Orca CLI for `orca`, and the shared shell tools for `codex-app`; visible Codex App thread operations still require running inside Codex Desktop with the thread tools available.
 Bootstrap also refreshes the fleet via `bin/fm-fleet-sync.sh`: it fetches each remote-backed clone, clean-fast-forwards its local default branch when safe, and prunes local branches whose upstream is gone and that no worktree still needs, best-effort and non-fatal.
+Bootstrap also sweeps live secondmate homes, fast-forwarding each seeded secondmate worktree to this firstmate's current local default-branch commit when safe. This is a local object-store fast-forward only: no fetch, no force, no stash, no merge commit, and no writes to `projects/`.
+The same secondmate sweep propagates the primary's declared inheritable config (`config/crew-harness` and `config/backlog-backend`) into each validated live secondmate home's `config/`. That copy is primary-authoritative and mirrors absence downstream, but it is separate from tracked-file fast-forwarding because `config/` is gitignored.
 Set `FM_FLEET_PRUNE=0` to temporarily disable that branch pruning.
 Silence means all good: say nothing and move on.
 Otherwise it prints one line per problem or capability fact; handle each:
@@ -138,6 +143,8 @@ Otherwise it prints one line per problem or capability fact; handle each:
 - `NEEDS_GH_AUTH` - ask the captain to run `! gh auth login` (interactive; you cannot run it for them).
 - `CREW_HARNESS_OVERRIDE: <name>` - record and use the override silently; surface a harness fact only if it actually blocks work or the captain asks.
 - `FLEET_SYNC: <repo>: skipped: <reason>` - bootstrap continued; investigate only if the dirty, diverged, or offline clone blocks work.
+- `SECONDMATE_SYNC: secondmate <id>: skipped: <reason>` - the local-HEAD secondmate sync or config propagation skipped a live secondmate home; bootstrap continued, but inspect the reason if that secondmate may now be stale.
+- `NUDGE_SECONDMATES: <window-targets...>` - one or more running secondmate homes fast-forwarded and their instruction surface changed; send each listed window a concise re-read nudge with `bin/fm-send.sh`.
 - `TASKS_AXI: available` - an optional capability fact, not a problem; record it silently and never surface it to the captain.
   Bootstrap prints this only after the `tasks-axi` compatibility probe passes for version 0.1.1 or newer.
   When a compatible `tasks-axi` is on PATH, firstmate routes routine `data/backlog.md` mutations through its verbs instead of hand-editing the file, exactly as section 10 describes.
@@ -157,6 +164,7 @@ Do not dispatch any work until the tools that work needs are present and GitHub 
 Use `gh-axi` for all GitHub operations, `chrome-devtools-axi` for all browser operations, and `lavish-axi` when a decision or report is complex enough to deserve a rich review surface.
 Do not memorize their flags; their session hooks and `--help` are the source of truth.
 If the captain names a different crewmate harness at bootstrap or later, write it to `config/crew-harness` (local, gitignored); that is the whole switch.
+`config/crew-harness` and `config/backlog-backend` are inherited by secondmate homes at secondmate spawn and during bootstrap's live secondmate sweep, so each secondmate's own crewmates and backlog mutations follow the primary's settings. `config/secondmate-harness` is deliberately not inherited: it controls how the primary launches secondmates, and secondmates do not launch secondmates.
 
 ## 4. Harness adapters
 
@@ -476,13 +484,13 @@ Its charter retargets escalation to the main firstmate's status file, so routine
 A ship task's path from `done` to landed on `main` is set by the project's `mode` (recorded in meta; section 6); `yolo` decides who approves. The Validate / PR ready / Ship teardown stages below are written for the `no-mistakes` path; the other modes diverge:
 
 - **no-mistakes** - the stages below as written: no-mistakes validation pipeline -> PR -> captain merge.
-- **direct-PR** - no pipeline. The crewmate pushes and opens the PR itself (its brief says so) and reports `done: PR <url>`. Skip the Validate step and go straight to PR ready (run `fm-pr-check`, relay the PR). Teardown uses the normal pushed-branch check.
+- **direct-PR** - no pipeline. The crewmate pushes and opens the PR itself (its brief says so) and reports `done: PR <url>`. Skip the Validate step and go straight to PR ready (run `fm-pr-check`, relay the PR). Teardown uses the normal landed-work check.
 - **local-only** - no remote, no PR. The crewmate stops at `done: ready in branch fm/<id>`. Review the diff with `bin/fm-review-diff.sh <id>`, relay a one-paragraph summary to the captain, and on approval run `bin/fm-merge-local.sh <id>` to fast-forward local `main` (it refuses anything but a clean fast-forward - if it does, have the crewmate rebase). No `fm-pr-check`. Then teardown, whose safety check requires the branch already merged into local `main`, OR the work pushed to any remote (a fork counts - relevant for upstream-contribution PRs on a local-only-registered project).
 
 When reviewing any crewmate branch diff, use `bin/fm-review-diff.sh <id>` rather than `git diff <default>...branch` directly.
 Pooled clones keep their local default refs frozen at clone time and can lag `origin`; the helper always compares against the authoritative base.
 
-**yolo (orthogonal).** With `yolo=off` (default) every approval is the captain's: ask-user findings, PR merges, the local-only merge. With `yolo=on`, firstmate makes those calls itself without asking - resolve ask-user findings on your judgment, and run `gh-axi pr merge` / `bin/fm-merge-local.sh` once the work is green/approved - EXCEPT anything destructive, irreversible, or security-sensitive, which still escalates to the captain. Never merge a red PR even under yolo. After any merge you perform without asking the captain, post a one-line "merged <full PR URL or local main> after checks passed" FYI so the captain keeps a trail.
+**yolo (orthogonal).** With `yolo=off` (default) every approval is the captain's: ask-user findings, PR merges, the local-only merge. With `yolo=on`, firstmate makes those calls itself without asking - resolve ask-user findings on your judgment, and run `gh-axi pr merge` / `bin/fm-merge-local.sh` once the work is green/approved - EXCEPT anything destructive, irreversible, or security-sensitive, which still escalates to the captain. Never merge a red PR even under yolo. Before a PR merge, make sure `bin/fm-pr-check.sh <id> <PR url>` has recorded `pr=` in the task meta, plus `pr_head=` as metadata when GitHub provides it; if no ready signal ran it yet, run it manually before merging so teardown has a PR reference instead of relying on branch-name discovery. After any merge you perform without asking the captain, post a one-line "merged <full PR URL or local main> after checks passed" FYI so the captain keeps a trail.
 
 ### Validate
 
@@ -505,7 +513,7 @@ Use chat for yes/no decisions; use lavish-axi when there are multiple findings o
 ### PR ready
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
-Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` in the task's meta and arms the watcher's merge poll.
+Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and GitHub's `pr_head=` when available in the task's meta, then arms the watcher's merge poll.
 Tell the captain: the PR's full URL (always the complete `https://...` link, never a bare `#number` - the captain's terminal makes a full URL clickable), a one-paragraph summary, and, for `no-mistakes`, the risk level it emitted.
 (The check contract, for any custom `state/<id>.check.sh` you write yourself: print one line only when firstmate should wake, print nothing otherwise, and finish before `FM_CHECK_TIMEOUT`.)
 
@@ -517,9 +525,10 @@ If the captain says "merge it", run `gh-axi pr merge` yourself; that instruction
 bin/fm-teardown.sh <id>
 ```
 
-The script refuses if the worktree holds unpushed work; treat a refusal as a stop-and-investigate, not an obstacle.
+The script refuses if the worktree holds uncommitted changes or committed work it cannot prove has landed; treat a refusal as a stop-and-investigate, not an obstacle.
 For Codex App tasks, first archive the visible thread with `set_thread_archived(threadId=<thread-id>, archived=true)`, then run `bin/fm-codex-app mark-archived <id>`, then run teardown.
-Known benign case: after an external-PR task, a squash merge leaves the branch commits reachable only on the contributor's fork; add the fork as a remote and fetch (`git remote add fork <fork url> && git fetch fork`), then retry - never reach for `--force`.
+For PR-based work, teardown first accepts commits reachable from any remote-tracking branch, then falls back to proving a merged PR contains the current local work or that the work's content is already in the up-to-date default branch. If the PR branch was squash/rebase-merged and deleted, teardown can fetch `refs/pull/<n>/head` and compare stable patch-ids instead of relying on the local branch commit existing on a remote.
+For `local-only` work, teardown accepts the branch only after it is merged into the local default branch, unless the work was pushed to some remote/fork.
 After a successful PR-based teardown, it also runs `bin/fm-fleet-sync.sh` for that project, best-effort, so the clone's local default catches up to the merge and the just-merged branch, now gone on the remote and free of its worktree, is pruned immediately.
 Then update the backlog using the teardown reminder: run `tasks-axi done` when the compatible tool is available, otherwise move the task to Done in `data/backlog.md` manually with the full `https://...` PR URL or local merge note and date and keep Done to the 10 most recent.
 Re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived.
@@ -578,7 +587,7 @@ On wake, in order of cheapness:
 3. `stale:` the crewmate stopped without reporting; inspect the visible session (`bin/fm-peek.sh <window>` for tmux/Orca, `read_thread` for Codex App) to diagnose.
 4. `check:` a per-task poll fired (usually a merge); act on it.
 5. `heartbeat:` review the whole fleet: skim each visible session's status file, inspect sessions that look off, check PR-ready tasks for merge, reconcile data/backlog.md, then re-arm the watcher.
-   A heartbeat with no captain-relevant change is internal; do not report that the fleet is unchanged.
+   If that review finds no captain-relevant change, keep it internal; do not report that the fleet is unchanged.
 
 Heartbeats back off exponentially while they are the only wakes firing (600s doubling to a 2h cap - an idle fleet stops burning turns); any signal, stale, or check wake resets the cadence to the base interval.
 Due per-task checks run before signal scanning so chatty crewmate status updates cannot starve slow polls like merge detection.
