@@ -70,7 +70,7 @@ $ claude   # launch your agent harness here; AGENTS.md takes over
 **Prerequisites** (the first mate detects everything else and offers to install it):
 
 ```sh
-# 1. a verified agent harness - claude, codex, opencode, or pi
+# 1. a verified agent harness - claude, codex, opencode, pi, or grok
 # 2. git + GitHub auth
 # 3. one visible backend: tmux/treehouse by default, Orca CLI, or Codex Desktop
 gh auth login
@@ -84,8 +84,8 @@ cd firstmate && claude
 ```
 
 That is the whole install.
-On first launch the first mate detects what its selected backend and shared toolchain are missing or too old (tmux/treehouse, Orca, node, gh, no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi), lists it with the exact install commands, and installs only after you say go.
-If compatible `tasks-axi` is already on `PATH`, bootstrap records it as an optional capability fact and firstmate uses its verbs for routine backlog mutations; when it is absent or incompatible, firstmate keeps hand-editing `data/backlog.md` exactly as before.
+On first launch the first mate detects what its selected backend and shared toolchain are missing or too old (tmux/treehouse, Orca, node, gh, no-mistakes, gh-axi, chrome-devtools-axi, lavish-axi, and `jq` when dispatch profiles are active or X mode is opted in), lists it with the exact install commands, and installs only after you say go.
+If compatible `tasks-axi` is already on `PATH`, bootstrap records it as an optional capability fact and firstmate uses its verbs for routine backlog mutations; when it is absent or incompatible, firstmate keeps hand-editing `data/backlog.md` exactly as before unless `config/backlog-backend=manual` opts out of the install suggestion.
 
 **Run it inside tmux for the best experience.**
 firstmate works from any terminal - outside tmux, crewmates land in a detached `firstmate` session you can attach to - but launching your harness from inside tmux puts every crewmate window in your own session, one per task, where you can watch the crew work in real time or type into any window to intervene.
@@ -147,8 +147,8 @@ Secondmates still run through tmux because each persistent supervisor owns an is
   Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless discard has been explicitly approved with `--force`.
 - **X mode is opt-in** - a gitignored `FMX_PAIRING_TOKEN` lets the watcher check path answer owner-routed public `@myfirstmate` mentions and normal reversible lifecycle asks, with `FMX_DRY_RUN` available to test the poll -> compose -> would-post loop without publishing.
   Destructive, irreversible, or security-sensitive asks still need trusted-channel confirmation.
-  Long public replies stay text-only and split into bounded numbered threads when needed.
-  A reply can attach one local image when there is a visual artifact; threaded replies attach the image only to the opener.
+  Long public replies split into bounded numbered threads when needed.
+  A reply or completion follow-up can attach one local image when there is a visual artifact; threaded replies attach the image only to the opener, and dry-run previews record compact image metadata instead of base64 bytes.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
   `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
 - **Project memory belongs to projects** - durable project-intrinsic agent knowledge lives in each project's committed `AGENTS.md`, with `CLAUDE.md` as a symlink.
@@ -165,7 +165,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `fm-bootstrap.sh`        | Detect required toolchain problems and optional capability facts; refresh clones best-effort, locally sync live secondmate homes, propagate inheritable config, and install tools only after consent |
+| `fm-bootstrap.sh`        | Detect required toolchain problems, dispatch profile status, and optional capability facts; refresh clones best-effort, locally sync live secondmate homes, propagate inheritable config, and install tools only after consent |
 | `fm-backend.sh`          | Shared backend adapter library for tmux, Orca, and Codex App visible-thread dispatch/read/send paths               |
 | `fm-backend-current`     | Print the active backend selection and profile details                                                             |
 | `fm-backend-use`         | Switch the local backend or named backend profile under gitignored `config/`                                        |
@@ -176,7 +176,8 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but queued wakes are pending or the watcher liveness beacon is stale or missing      |
 | `fm-home-seed.sh`        | Lease/provision a secondmate home transactionally, clone projects, initialize gates, and maintain `data/secondmates.md` |
-| `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs, or a persistent secondmate with `--secondmate`; secondmate spawns locally sync the home and propagate inheritable config before launch |
+| `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs, or a persistent secondmate with `--secondmate`; accepts concrete `--harness`, `--model`, and `--effort` profile axes; ship/scout spawns require an explicit resolved harness when dispatch profiles are active, and secondmate spawns locally sync the home and propagate inheritable config before launch |
+| `fm-config-push.sh`      | Push declared inheritable local config to live secondmate homes without fast-forwarding tracked files or nudging agents |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`                                          |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval                                           |
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
@@ -189,10 +190,13 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-codex-app`           | Local ledger and safety guard for visible Codex Desktop threads; records thread ids, captures, pending ids, and archive state |
 | `fm-codex-app-smoke-check.sh` | Check a captured Codex App smoke transcript for visible-thread proof and reject headless-only evidence       |
 | `fm-pr-check.sh`         | Record `pr=` and GitHub's `pr_head=` when available for a PR-ready task, then arm the watcher's merge poll          |
+| `fm-pr-merge.sh`         | Record PR metadata before merging a full GitHub PR URL through `gh-axi pr merge`, defaulting to squash unless a merge method is forwarded |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
-| `fm-teardown.sh`         | Return a clean, landed ship worktree or retire/release a secondmate home; proves landing through remote reachability, merged PR heads, patch IDs, content-in-default, or approved local-only merge |
-| `fm-harness.sh`          | Detect the running harness; resolve the effective crewmate harness                                                  |
+| `fm-teardown.sh`         | Return a clean, landed ship worktree or retire/release a secondmate home; proves landing through remote reachability, merged PR heads, stable patch IDs, content-in-default, or approved local-only merge |
+| `fm-harness.sh`          | Detect the running harness; resolve the effective crewmate (`crew`) or secondmate-launch (`secondmate`) harness     |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                                                     |
+| `fm-x-reply.sh`          | Post or dry-run preview a public-safe X answer or `--followup`, auto-splitting long text into threads and optionally attaching `--image <path>` to the opener |
+| `fm-x-followup.sh`       | Detect, post, and clear the single completion follow-up for an X-linked task, forwarding optional `--image <path>` |
 
 ## Configuration
 
@@ -216,7 +220,9 @@ When it is unset, the repo root is the home; when it is set, scripts still run f
 `FM_BACKEND` selects the visible crew backend for ordinary ship/scout tasks.
 It overrides local `config/backend`, then `config/backend.env`; valid values are `tmux`, `orca`, and `codex-app`.
 Named profiles live under gitignored `config/backends/` and can be switched with `bin/fm-backend-use`.
-Harness support is a table in section 4: claude, codex, opencode, and pi are all empirically verified; new harnesses get verified through a supervised trial task before joining the table.
+Harness support is a table in section 4: claude, codex, opencode, pi, and grok are all empirically verified; new harnesses get verified through a supervised trial task before joining the table.
+Optional local dispatch profiles in `config/crew-dispatch.json` let firstmate choose a per-task harness, model, and effort before spawning; when that file exists, crewmate and scout spawns must pass the resolved harness explicitly.
+The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend` into secondmate homes at secondmate spawn, during bootstrap, and through `bin/fm-config-push.sh`.
 
 Runtime tuning via environment variables (defaults shown):
 
@@ -233,7 +239,7 @@ FM_WATCHER_STALE_GRACE=300   # duplicate watcher lock grace; defaults to FM_GUAR
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effort clone refresh
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
-FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|codex-app status: active'   # busy signatures, shared by watcher and helpers
+FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|codex-app status: active'   # busy signatures, shared by watcher and helpers
 FM_COMPOSER_IDLE_RE=    # optional empty-composer regex, applied after dim-ghost and border stripping
 FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
@@ -276,10 +282,16 @@ for test_script in tests/*.test.sh test/*.test.sh; do "$test_script"; done   # b
 tests/fm-wake-queue.test.sh               # durable wake queue, singleton behavior, sub-supervisor classifier, /afk presence-gating, border-aware composer, max-defer, and fm-send submit tests
 tests/fm-composer-ghost.test.sh           # dim-ghost stripping, ghost-only composer detection, and escape-free peek tests
 tests/fm-afk-inject-e2e.test.sh           # private-socket end-to-end test of the afk injection path (partial-input deferral, swallowed-Enter retry)
-tests/fm-bootstrap.test.sh                # bootstrap dependency and feature-probe tests
+tests/fm-bootstrap.test.sh                # bootstrap dependency, feature-probe, and crew-dispatch reporting tests
+tests/fm-spawn-dispatch-profile.test.sh   # dispatch profile backstop, harness/model/effort meta, launch flags, batch forwarding, and secondmate exemption
+tests/fm-pr-merge.test.sh                 # PR metadata recording, full-URL parsing, merge-method forwarding, and repo override rejection
+tests/fm-x-mode.test.sh                   # X-mode poll, inbox context, reply threading, image attachments, dismiss, dry-run preview, and .env activation tests
 tests/fm-update.test.sh                   # fast-forward-only self-update, reread, nudge, dedup, and skip-safety tests
-tests/fm-secondmate.test.sh               # persistent secondmate routing, seeding, idle charter, backlog handoff, spawn, recovery, teardown, and FM_HOME tests
-tests/fm-teardown.test.sh                 # fm-teardown.sh safety and reminder checks: remote reachability, merged PR head/patch-id/content proof, local-only merge/fork allow, tasks-axi reminder, --force override
+tests/fm-secondmate-sync.test.sh          # local-HEAD secondmate sync, no-fetch, bootstrap nudge gating, and spawn hook tests
+tests/fm-secondmate-harness.test.sh       # secondmate-vs-crewmate harness resolution, inherited config, and config-push tests
+tests/fm-secondmate-lifecycle-e2e.test.sh # persistent secondmate routing, seeding, backlog handoff, spawn, recovery, teardown, and FM_HOME flow tests
+tests/fm-secondmate-safety.test.sh        # secondmate home safety, idle charter, handoff validation, and teardown boundary tests
+tests/fm-teardown.test.sh                 # fm-teardown.sh safety and reminder checks: fork-remote allow, squash/content landings, dirty and unlanded refusals, PR-head metadata, no-pr= branch discovery, tasks-axi/manual backlog reminder, --force override
 test/fm-backend-regression.test.sh        # backend selection, Codex App spawn contract, and Orca launch ordering
 test/fm-codex-app-state.test.sh           # visible Codex Desktop thread ledger state
 test/fm-codex-app-teardown.test.sh        # Codex App worktree/PR/archive teardown safety
