@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for fm-bootstrap.sh tool detection.
 #
-# Bootstrap prints one line per problem or capability fact and is silent when all
+# Bootstrap prints one block or line per problem or capability fact and is silent when all
 # is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
 # 'MISSING: tasks-axi (install: ...)', and 'TASKS_AXI: available' lines, so those
 # contracts are pinned verbatim. The cases are table-driven over the inputs that
@@ -65,6 +65,16 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/tasks-axi"
+}
+
+add_real_jq() {
+  local fakebin=$1 real_jq
+  real_jq=$(command -v jq 2>/dev/null) || fail "jq is required for dispatch profile validation tests"
+  cat > "$fakebin/jq" <<SH
+#!/usr/bin/env bash
+exec '$real_jq' "\$@"
+SH
+  chmod +x "$fakebin/jq"
 }
 
 # Each row (fields are '^'-separated; the install URL contains a literal '|'):
@@ -146,5 +156,54 @@ ROWS
   pass "bootstrap enforces no-mistakes minimum version"
 }
 
+test_crew_dispatch_active_rules_are_surfaced() {
+  local case_dir fakebin out expect
+  case_dir="$TMP_ROOT/dispatch-active"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' '{"rules":[{"when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"when":"big feature","use":{"harness":"codex","model":"gpt-5.5","effort":"high"}}],"default":{"harness":"claude","model":"haiku","effort":"low"}}' > "$case_dir/home/config/crew-dispatch.json"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+  expect=$'CREW_DISPATCH: active config/crew-dispatch.json\n  rule: fresh news -> grok\n  rule: big feature -> codex/gpt-5.5/high\n  default: claude/haiku/low'
+  [ "$out" = "$expect" ] || fail "active dispatch profile block mismatch"$'\n'"expected: $expect"$'\n'"actual:   $out"
+  pass "bootstrap surfaces active crew-dispatch rules and default"
+}
+
+test_crew_dispatch_validation() {
+  local label body expect mode case_dir fakebin out n
+  n=0
+  while IFS='^' read -r label body mode expect; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    case_dir="$TMP_ROOT/dispatch-$n"
+    mkdir -p "$case_dir/home/config"
+    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+    printf '%s\n' "$body" > "$case_dir/home/config/crew-dispatch.json"
+    fakebin=$(make_fake_toolchain "$case_dir")
+    add_real_jq "$fakebin"
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+    case "$mode" in
+      empty)
+        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
+      exact)
+        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
+    esac
+  done <<'ROWS'
+malformed dispatch config is flagged^{"rules":[^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON
+unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: spaceship
+unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
+unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:max
+unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
+ROWS
+  pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
+}
+
 test_bootstrap_reporting
 test_no_mistakes_min_version
+test_crew_dispatch_active_rules_are_surfaced
+test_crew_dispatch_validation
