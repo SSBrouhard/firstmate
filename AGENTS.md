@@ -50,8 +50,9 @@ Hard rules, in priority order:
    The one standing, captain-authorized relaxation is a project's `yolo` flag (section 7): with `yolo` on, firstmate makes routine approval decisions itself, but anything destructive, irreversible, or security-sensitive still escalates to the captain.
 3. **Never tear down a worktree that holds unlanded work.**
    `bin/fm-teardown.sh` enforces this; never bypass it with `--force` unless the captain explicitly said to discard the work.
-   The work is "landed" once `HEAD` is reachable from any remote-tracking branch (a fork counts as a remote - upstream-contribution PRs pushed to a fork satisfy this in any mode); for a normal ship task whose commits are not so reachable, it is also landed when its PR is merged and GitHub reports a PR head that contains the current local work, either as an ancestor or as equivalent stable patch-ids, or when the work's content is already present in the up-to-date default branch; for `local-only` ship tasks with no remote at all, the work may instead be merged into the local default branch.
-   The PR consulted for that check comes from the task's recorded `pr=` when present, or from a merged PR discovered by matching the worktree's branch name when no `pr=` was recorded; `bin/fm-teardown.sh` can fetch `refs/pull/<n>/head` and compare stable patch-ids, so a missing local remote-tracking branch is not by itself proof that work is unlanded.
+   The work is "landed" once `HEAD` is reachable from any remote-tracking branch (a fork counts as a remote - upstream-contribution PRs pushed to a fork satisfy this in any mode); for a normal ship task whose commits are not so reachable, it is also landed when its PR is merged and GitHub reports a PR head that contains the current local work (including a local `HEAD` that is an ancestor of the PR head, or unpushed local patches that were replayed into that PR head) or when its content is already present in the up-to-date default branch; for `local-only` ship tasks with no remote at all, the work may instead be merged into the local default branch.
+   The PR consulted for that check comes from the task's recorded `pr=` when present, or - when no `pr=` was ever recorded, e.g. a yolo-authorized merge on a repo with no PR CI where the usual "checks green" `fm-pr-check.sh` trigger never fires - from a merged PR discovered by matching the worktree's own branch name, so a missing `pr=` never by itself false-refuses landed work. Use `bin/fm-pr-merge.sh <id> <PR url>` for every merge (captain-requested or yolo) so `pr=` and any available `pr_head=` are recorded as part of the merge itself rather than relying on that discovery fallback.
+   `bin/fm-teardown.sh` can fetch `refs/pull/<n>/head` and compare stable patch-ids, so a missing local remote-tracking branch is not by itself proof that work is unlanded.
    Uncommitted changes are never landed.
    The scout carve-out: a scout task's worktree is declared scratch from the start - its deliverable is the report, and teardown lets the worktree go once that report exists (section 7).
 4. **Crewmates never address the captain.**
@@ -113,7 +114,7 @@ state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" lines
   <id>.turn-ended    touched by turn-end hooks
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
-  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=; kind=secondmate also records home= and projects=; Orca tasks record terminal= and orca_worktree_id=; Codex App tasks record thread_id= once visible, plus codex_app_thread_state= and any pending worktree id (fm-pr-check appends pr= and GitHub's pr_head= when available; fm-x-link appends x_request= and x_request_ts= for an X-mention-originated task, section 14)
+  <id>.meta          written by fm-spawn: backend=, window=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=; kind=secondmate also records home= and projects=; Orca tasks record terminal= and orca_worktree_id=; Codex App tasks record thread_id= once visible, plus codex_app_thread_state= and any pending worktree id (fm-pr-check, including through fm-pr-merge, appends pr= and GitHub's pr_head= when available; fm-x-link appends x_request= and x_request_ts= for an X-mention-originated task, section 14)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
@@ -616,9 +617,10 @@ When reviewing any crewmate branch diff, use `bin/fm-review-diff.sh <id>` rather
 Pooled clones keep their local default refs frozen at clone time and can lag `origin`; the helper always compares against the authoritative base.
 
 **yolo (orthogonal).** With `yolo=off` (default) every approval is the captain's: ask-user findings, PR merges, the local-only merge.
-With `yolo=on`, firstmate makes those calls itself without asking - resolve ask-user findings on your judgment, and run `gh-axi pr merge` / `bin/fm-merge-local.sh` once the work is green/approved - EXCEPT anything destructive, irreversible, or security-sensitive, which still escalates to the captain.
+With `yolo=on`, firstmate makes those calls itself without asking - resolve ask-user findings on your judgment, and run `bin/fm-pr-merge.sh <id> <PR url>` / `bin/fm-merge-local.sh` once the work is green/approved - EXCEPT anything destructive, irreversible, or security-sensitive, which still escalates to the captain.
 Never merge a red PR even under yolo.
-Before a PR merge, make sure `bin/fm-pr-check.sh <id> <PR url>` has recorded `pr=` in the task meta, plus `pr_head=` as metadata when GitHub provides it; if no ready signal ran it yet, run it manually before merging so teardown has a PR reference instead of relying on branch-name discovery.
+`bin/fm-pr-merge.sh` always records `pr=` and records `pr_head=` when available before merging, so this holds even on a repo with no PR CI where the "checks green" signal that normally triggers `bin/fm-pr-check.sh` never fires.
+Do not call `gh-axi pr merge` directly for a task's PR, or the recording step can be silently skipped and a later `fm-teardown.sh` has nothing to verify a squash merge against.
 After any merge you perform without asking the captain, post a one-line "merged <full PR URL or local main> after checks passed" FYI so the captain keeps a trail.
 
 ### Validate
@@ -646,8 +648,7 @@ Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and GitHub's `pr_head=
 Tell the captain: the PR's full URL (always the complete `https://...` link, never a bare `#number` - the captain's terminal makes a full URL clickable), a one-paragraph summary, and, for `no-mistakes`, the risk level it emitted.
 (The check contract, for any custom `state/<id>.check.sh` you write yourself: print one line only when firstmate should wake, print nothing otherwise, and finish before `FM_CHECK_TIMEOUT`.)
 
-If the captain says "merge it", run `gh-axi pr merge` yourself; that instruction is the explicit approval.
-If `yolo=on`, merge a green/approved PR yourself and post the required FYI.
+If the captain says "merge it", run `bin/fm-pr-merge.sh <id> <PR url>` yourself; that instruction is the explicit approval. If `yolo=on`, merge a green/approved PR yourself the same way and post the required FYI.
 
 ### Ship teardown (only after merge is confirmed)
 
@@ -658,9 +659,15 @@ bin/fm-teardown.sh <id>
 The script refuses if the worktree holds uncommitted changes or committed work it cannot prove has landed; treat a refusal as a stop-and-investigate, not an obstacle.
 For Codex App tasks, first archive the visible thread with `set_thread_archived(threadId=<thread-id>, archived=true)`, then run `bin/fm-codex-app mark-archived <id>`, then run teardown.
 For PR-based work, teardown first accepts commits reachable from any remote-tracking branch, then falls back to proving a merged PR contains the current local work or that the work's content is already in the up-to-date default branch.
+Containment means local `HEAD` is the PR head, local `HEAD` is an ancestor of the PR head, or the unpushed local patches have matching patch IDs in that PR head after no-mistakes replayed the branch.
 If the PR branch was squash/rebase-merged and deleted, teardown can fetch `refs/pull/<n>/head` and compare stable patch-ids instead of relying on the local branch commit existing on a remote.
+The PR is looked up from the task's recorded `pr=` when present, or, when no `pr=` was ever recorded, by finding a merged PR whose head branch matches the worktree's branch and fetching its head via `refs/pull/<n>/head` if the branch itself was deleted.
+That means a task whose merge skipped `bin/fm-pr-check.sh` can still tear down cleanly instead of false-refusing, though `bin/fm-pr-merge.sh` is still the required merge path because it records the PR metadata before the merge.
+Genuinely unlanded work, dirty worktrees, and inconclusive GitHub/content checks still refuse.
+Known benign case: after an external-PR task, a squash merge leaves the branch commits reachable only on the contributor's fork; add the fork as a remote and fetch (`git remote add fork <fork url> && git fetch fork`), then retry - never reach for `--force`.
 For `local-only` work, teardown accepts the branch only after it is merged into the local default branch, unless the work was pushed to some remote/fork.
 After a successful PR-based teardown, it also runs `bin/fm-fleet-sync.sh` for that project, best-effort, so the clone's local default catches up to the merge and the just-merged branch, now gone on the remote and free of its worktree, is pruned immediately.
+Unsafe drift is reported as `STUCK:` and left untouched.
 Then update the backlog using the teardown reminder: run `tasks-axi done` when the compatible tool is available, otherwise move the task to Done in `data/backlog.md` manually with the full `https://...` PR URL or local merge note and date and keep Done to the 10 most recent.
 Re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived.
 
