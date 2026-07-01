@@ -91,6 +91,7 @@ The `data/secondmates.md` line schema and the secondmate environment variables a
 `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
 Landed work is accepted when `HEAD` is reachable from any remote-tracking branch, when a merged PR's GitHub head contains the current local work, or when the worktree content is already present in the freshly fetched default branch.
+The merged PR is resolved from recorded `pr=` metadata first and then by branch-name lookup; when the PR head object is missing locally, teardown can fetch `refs/pull/<n>/head` before comparing.
 PR-head containment covers an exact PR head match, a local `HEAD` that is an ancestor of the PR head, or unpushed local patches whose patch IDs appear in the PR head after no-mistakes replayed the branch.
 GitHub lookup errors fall back to the content check and still refuse if that check is inconclusive.
 Those PR-head and content checks let a squash-merged PR whose head branch was deleted tear down cleanly without using `--force`; `local-only` work instead tears down after the approved local default-branch merge or after the branch is pushed to any remote.

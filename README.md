@@ -139,6 +139,7 @@ Secondmates still run through tmux because each persistent supervisor owns an is
   `local-only` projects stay with the main first mate because they merge into the main local checkout instead of a remote-backed PR path.
   The same project may appear in multiple secondmate homes when their scopes differ, such as issue triage versus feature development.
   Secondmates are idle by default: after startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
+  Bootstrap and secondmate spawn locally fast-forward live secondmate homes to the primary firstmate version when safe, then propagate inheritable local config (`config/crew-harness` and `config/backlog-backend`) so their own crews use the same settings.
   After seeding a secondmate, `fm-backlog-handoff.sh` moves already-judged in-scope queued items from the main backlog into that secondmate home so the domain queue starts in the right place.
   Idle secondmate panes are healthy; teardown is explicit and refuses while the secondmate home has in-flight work unless discard has been explicitly approved with `--force`.
 - **Project modes are explicit** - `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
@@ -157,7 +158,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `fm-bootstrap.sh`        | Detect required toolchain problems and optional capability facts; refresh clones best-effort; install tools only after consent |
+| `fm-bootstrap.sh`        | Detect required toolchain problems and optional capability facts; refresh clones best-effort, locally sync live secondmate homes, propagate inheritable config, and install tools only after consent |
 | `fm-backend.sh`          | Shared backend adapter library for tmux, Orca, and Codex App visible-thread dispatch/read/send paths               |
 | `fm-backend-current`     | Print the active backend selection and profile details                                                             |
 | `fm-backend-use`         | Switch the local backend or named backend profile under gitignored `config/`                                        |
@@ -168,7 +169,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-ensure-agents-md.sh` | Ensure project `AGENTS.md` is the real memory file and `CLAUDE.md` symlinks to it                                   |
 | `fm-guard.sh`            | Warn when tasks are in flight but queued wakes are pending or the watcher liveness beacon is stale or missing      |
 | `fm-home-seed.sh`        | Lease/provision a secondmate home transactionally, clone projects, initialize gates, and maintain `data/secondmates.md` |
-| `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs, or a persistent secondmate with `--secondmate`; honors the active backend |
+| `fm-spawn.sh`            | Spawn one task, several `id=repo` pairs, or a persistent secondmate with `--secondmate`; secondmate spawns locally sync the home and propagate inheritable config before launch |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`                                          |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval                                           |
 | `fm-review-diff.sh`      | Review a crewmate branch against the authoritative base, with optional `--stat` output                              |
@@ -180,9 +181,9 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-peek.sh`             | Print a bounded tail of a crewmate session when the backend can expose one                                         |
 | `fm-codex-app`           | Local ledger and safety guard for visible Codex Desktop threads; records thread ids, captures, pending ids, and archive state |
 | `fm-codex-app-smoke-check.sh` | Check a captured Codex App smoke transcript for visible-thread proof and reject headless-only evidence       |
-| `fm-pr-check.sh`         | Record a PR-ready task and arm the watcher's merge poll                                                             |
+| `fm-pr-check.sh`         | Record `pr=` and GitHub's `pr_head=` when available for a PR-ready task, then arm the watcher's merge poll          |
 | `fm-promote.sh`          | Promote a scout task in place so it becomes a protected ship task                                                   |
-| `fm-teardown.sh`         | Return the worktree or retire/release a secondmate home; protects ship work, requires scout reports, checks child work, and prints the backlog reminder |
+| `fm-teardown.sh`         | Return a clean, landed ship worktree or retire/release a secondmate home; proves landing through remote reachability, merged PR heads, patch IDs, content-in-default, or approved local-only merge |
 | `fm-harness.sh`          | Detect the running harness; resolve the effective crewmate harness                                                  |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                                                     |
 
@@ -271,7 +272,7 @@ tests/fm-afk-inject-e2e.test.sh           # private-socket end-to-end test of th
 tests/fm-bootstrap.test.sh                # bootstrap dependency and feature-probe tests
 tests/fm-update.test.sh                   # fast-forward-only self-update, reread, nudge, dedup, and skip-safety tests
 tests/fm-secondmate.test.sh               # persistent secondmate routing, seeding, idle charter, backlog handoff, spawn, recovery, teardown, and FM_HOME tests
-tests/fm-teardown.test.sh                 # fm-teardown.sh safety and reminder checks: local-only fork-remote allow, truly-unpushed refuse, merged-to-main allow, no-mistakes regression, tasks-axi reminder, --force override
+tests/fm-teardown.test.sh                 # fm-teardown.sh safety and reminder checks: remote reachability, merged PR head/patch-id/content proof, local-only merge/fork allow, tasks-axi reminder, --force override
 test/fm-backend-regression.test.sh        # backend selection, Codex App spawn contract, and Orca launch ordering
 test/fm-codex-app-state.test.sh           # visible Codex Desktop thread ledger state
 test/fm-codex-app-teardown.test.sh        # Codex App worktree/PR/archive teardown safety
