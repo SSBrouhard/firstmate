@@ -131,6 +131,20 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  batch_spawn_one() {
+    local task_id=$1 project_arg=$2 scout_flag=${3:-}
+    if [ "${#shared_args[@]}" -gt 0 ]; then
+      if [ -n "$scout_flag" ]; then
+        FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$task_id" "$project_arg" "${shared_args[@]}" "$scout_flag"
+      else
+        FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$task_id" "$project_arg" "${shared_args[@]}"
+      fi
+    elif [ -n "$scout_flag" ]; then
+      FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$task_id" "$project_arg" "$scout_flag"
+    else
+      FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$task_id" "$project_arg"
+    fi
+  }
   for pair in "${POS[@]}"; do
     case "$pair" in
       *=*) : ;;
@@ -141,9 +155,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
       rc=2
       continue
     elif [ "$KIND" = scout ]; then
-      if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}" "${shared_args[@]}" --scout; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
+      if batch_spawn_one "${pair%%=*}" "${pair#*=}" --scout; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
     else
-      if FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair%%=*}" "${pair#*=}" "${shared_args[@]}"; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
+      if batch_spawn_one "${pair%%=*}" "${pair#*=}"; then :; else echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2; rc=1; fi
     fi
   done
   exit "$rc"
