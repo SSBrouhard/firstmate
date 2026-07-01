@@ -131,8 +131,10 @@ Run `bin/fm-bootstrap.sh`.
 Bootstrap reads backend selection before tool detection: `FM_BACKEND` wins over `config/backend`, then `config/backend.env`, with `tmux` as the default.
 It checks only the selected backend's shell-side tools: tmux/treehouse for `tmux`, Orca CLI for `orca`, and the shared shell tools for `codex-app`; visible Codex App thread operations still require running inside Codex Desktop with the thread tools available.
 Bootstrap also refreshes the fleet via `bin/fm-fleet-sync.sh`: it fetches each remote-backed clone, clean-fast-forwards its local default branch when safe, and prunes local branches whose upstream is gone and that no worktree still needs, best-effort and non-fatal.
-Bootstrap also sweeps live secondmate homes, fast-forwarding each seeded secondmate worktree to this firstmate's current local default-branch commit when safe. This is a local object-store fast-forward only: no fetch, no force, no stash, no merge commit, and no writes to `projects/`.
-The same secondmate sweep propagates the primary's declared inheritable config (`config/crew-harness` and `config/backlog-backend`) into each validated live secondmate home's `config/`. That copy is primary-authoritative and mirrors absence downstream, but it is separate from tracked-file fast-forwarding because `config/` is gitignored.
+Bootstrap also sweeps live secondmate homes, fast-forwarding each seeded secondmate worktree to this firstmate's current local default-branch commit when safe.
+This is a local object-store fast-forward only: no fetch, no force, no stash, no merge commit, and no writes to `projects/`.
+The same secondmate sweep propagates the primary's declared inheritable config (`config/crew-harness` and `config/backlog-backend`) into each validated live secondmate home's `config/`.
+That copy is primary-authoritative and mirrors absence downstream, but it is separate from tracked-file fast-forwarding because `config/` is gitignored.
 Set `FM_FLEET_PRUNE=0` to temporarily disable that branch pruning.
 Silence means all good: say nothing and move on.
 Otherwise it prints one line per problem or capability fact; handle each:
@@ -164,7 +166,8 @@ Do not dispatch any work until the tools that work needs are present and GitHub 
 Use `gh-axi` for all GitHub operations, `chrome-devtools-axi` for all browser operations, and `lavish-axi` when a decision or report is complex enough to deserve a rich review surface.
 Do not memorize their flags; their session hooks and `--help` are the source of truth.
 If the captain names a different crewmate harness at bootstrap or later, write it to `config/crew-harness` (local, gitignored); that is the whole switch.
-`config/crew-harness` and `config/backlog-backend` are inherited by secondmate homes at secondmate spawn and during bootstrap's live secondmate sweep, so each secondmate's own crewmates and backlog mutations follow the primary's settings. `config/secondmate-harness` is deliberately not inherited: it controls how the primary launches secondmates, and secondmates do not launch secondmates.
+`config/crew-harness` and `config/backlog-backend` are inherited by secondmate homes at secondmate spawn and during bootstrap's live secondmate sweep, so each secondmate's own crewmates and backlog mutations follow the primary's settings.
+`config/secondmate-harness` is deliberately not inherited: it controls how the primary launches secondmates, and secondmates do not launch secondmates.
 
 ## 4. Harness adapters
 
@@ -481,16 +484,28 @@ Its charter retargets escalation to the main firstmate's status file, so routine
 
 ### Delivery modes and yolo
 
-A ship task's path from `done` to landed on `main` is set by the project's `mode` (recorded in meta; section 6); `yolo` decides who approves. The Validate / PR ready / Ship teardown stages below are written for the `no-mistakes` path; the other modes diverge:
+A ship task's path from `done` to landed on `main` is set by the project's `mode` (recorded in meta; section 6); `yolo` decides who approves.
+The Validate / PR ready / Ship teardown stages below are written for the `no-mistakes` path; the other modes diverge:
 
 - **no-mistakes** - the stages below as written: no-mistakes validation pipeline -> PR -> captain merge.
-- **direct-PR** - no pipeline. The crewmate pushes and opens the PR itself (its brief says so) and reports `done: PR <url>`. Skip the Validate step and go straight to PR ready (run `fm-pr-check`, relay the PR). Teardown uses the normal landed-work check.
-- **local-only** - no remote, no PR. The crewmate stops at `done: ready in branch fm/<id>`. Review the diff with `bin/fm-review-diff.sh <id>`, relay a one-paragraph summary to the captain, and on approval run `bin/fm-merge-local.sh <id>` to fast-forward local `main` (it refuses anything but a clean fast-forward - if it does, have the crewmate rebase). No `fm-pr-check`. Then teardown, whose safety check requires the branch already merged into local `main`, OR the work pushed to any remote (a fork counts - relevant for upstream-contribution PRs on a local-only-registered project).
+- **direct-PR** - no pipeline.
+  The crewmate pushes and opens the PR itself (its brief says so) and reports `done: PR <url>`.
+  Skip the Validate step and go straight to PR ready (run `fm-pr-check`, relay the PR).
+  Teardown uses the normal landed-work check.
+- **local-only** - no remote, no PR.
+  The crewmate stops at `done: ready in branch fm/<id>`.
+  Review the diff with `bin/fm-review-diff.sh <id>`, relay a one-paragraph summary to the captain, and on approval run `bin/fm-merge-local.sh <id>` to fast-forward local `main` (it refuses anything but a clean fast-forward - if it does, have the crewmate rebase).
+  No `fm-pr-check`.
+  Then teardown, whose safety check requires the branch already merged into local `main`, OR the work pushed to any remote (a fork counts - relevant for upstream-contribution PRs on a local-only-registered project).
 
 When reviewing any crewmate branch diff, use `bin/fm-review-diff.sh <id>` rather than `git diff <default>...branch` directly.
 Pooled clones keep their local default refs frozen at clone time and can lag `origin`; the helper always compares against the authoritative base.
 
-**yolo (orthogonal).** With `yolo=off` (default) every approval is the captain's: ask-user findings, PR merges, the local-only merge. With `yolo=on`, firstmate makes those calls itself without asking - resolve ask-user findings on your judgment, and run `gh-axi pr merge` / `bin/fm-merge-local.sh` once the work is green/approved - EXCEPT anything destructive, irreversible, or security-sensitive, which still escalates to the captain. Never merge a red PR even under yolo. Before a PR merge, make sure `bin/fm-pr-check.sh <id> <PR url>` has recorded `pr=` in the task meta, plus `pr_head=` as metadata when GitHub provides it; if no ready signal ran it yet, run it manually before merging so teardown has a PR reference instead of relying on branch-name discovery. After any merge you perform without asking the captain, post a one-line "merged <full PR URL or local main> after checks passed" FYI so the captain keeps a trail.
+**yolo (orthogonal).** With `yolo=off` (default) every approval is the captain's: ask-user findings, PR merges, the local-only merge.
+With `yolo=on`, firstmate makes those calls itself without asking - resolve ask-user findings on your judgment, and run `gh-axi pr merge` / `bin/fm-merge-local.sh` once the work is green/approved - EXCEPT anything destructive, irreversible, or security-sensitive, which still escalates to the captain.
+Never merge a red PR even under yolo.
+Before a PR merge, make sure `bin/fm-pr-check.sh <id> <PR url>` has recorded `pr=` in the task meta, plus `pr_head=` as metadata when GitHub provides it; if no ready signal ran it yet, run it manually before merging so teardown has a PR reference instead of relying on branch-name discovery.
+After any merge you perform without asking the captain, post a one-line "merged <full PR URL or local main> after checks passed" FYI so the captain keeps a trail.
 
 ### Validate
 
@@ -517,7 +532,8 @@ Run `bin/fm-pr-check.sh <id> <PR url>` - it records `pr=` and GitHub's `pr_head=
 Tell the captain: the PR's full URL (always the complete `https://...` link, never a bare `#number` - the captain's terminal makes a full URL clickable), a one-paragraph summary, and, for `no-mistakes`, the risk level it emitted.
 (The check contract, for any custom `state/<id>.check.sh` you write yourself: print one line only when firstmate should wake, print nothing otherwise, and finish before `FM_CHECK_TIMEOUT`.)
 
-If the captain says "merge it", run `gh-axi pr merge` yourself; that instruction is the explicit approval. If `yolo=on`, merge a green/approved PR yourself and post the required FYI.
+If the captain says "merge it", run `gh-axi pr merge` yourself; that instruction is the explicit approval.
+If `yolo=on`, merge a green/approved PR yourself and post the required FYI.
 
 ### Ship teardown (only after merge is confirmed)
 
@@ -527,7 +543,8 @@ bin/fm-teardown.sh <id>
 
 The script refuses if the worktree holds uncommitted changes or committed work it cannot prove has landed; treat a refusal as a stop-and-investigate, not an obstacle.
 For Codex App tasks, first archive the visible thread with `set_thread_archived(threadId=<thread-id>, archived=true)`, then run `bin/fm-codex-app mark-archived <id>`, then run teardown.
-For PR-based work, teardown first accepts commits reachable from any remote-tracking branch, then falls back to proving a merged PR contains the current local work or that the work's content is already in the up-to-date default branch. If the PR branch was squash/rebase-merged and deleted, teardown can fetch `refs/pull/<n>/head` and compare stable patch-ids instead of relying on the local branch commit existing on a remote.
+For PR-based work, teardown first accepts commits reachable from any remote-tracking branch, then falls back to proving a merged PR contains the current local work or that the work's content is already in the up-to-date default branch.
+If the PR branch was squash/rebase-merged and deleted, teardown can fetch `refs/pull/<n>/head` and compare stable patch-ids instead of relying on the local branch commit existing on a remote.
 For `local-only` work, teardown accepts the branch only after it is merged into the local default branch, unless the work was pushed to some remote/fork.
 After a successful PR-based teardown, it also runs `bin/fm-fleet-sync.sh` for that project, best-effort, so the clone's local default catches up to the merge and the just-merged branch, now gone on the remote and free of its worktree, is pruned immediately.
 Then update the backlog using the teardown reminder: run `tasks-axi done` when the compatible tool is available, otherwise move the task to Done in `data/backlog.md` manually with the full `https://...` PR URL or local merge note and date and keep Done to the 10 most recent.
