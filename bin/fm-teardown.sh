@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Tear down a finished task: return the treehouse worktree or retire a
-# secondmate home, kill the recorded runtime endpoint, clear volatile
-# state, refresh/prune the project's clone for PR-based ship tasks, then print a backlog-refresh
-# reminder.
-# REFUSES if the worktree holds work that has not LANDED, because treehouse return
-# hard-resets the worktree and kills its processes. Work has landed when it is
+# Tear down a finished task: return the treehouse worktree, release the Orca
+# worktree, or retire a secondmate home; kill the recorded runtime endpoint,
+# clear volatile state, refresh/prune the project's clone for PR-based ship
+# tasks, then print a backlog-refresh reminder.
+# REFUSES if the worktree holds work that has not LANDED, because cleanup
+# hard-resets/removes the worktree and kills its processes. Work has landed when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
 # upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
 # normal ship task whose commits are not so reachable - when its PR is merged and
@@ -27,6 +27,9 @@
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product - teardown proceeds once the report exists, and refuses without it.
+# Orca tasks use the same safety checks, then close the recorded terminal and
+# remove the recorded worktree through `orca worktree rm`; teardown never guesses
+# an Orca target from ambient CLI state.
 # Secondmates (kind=secondmate in meta) are retired explicitly. Normal
 # teardown refuses while their home has in-flight crewmate meta files; --force
 # is the approved discard path that prevalidates child removal targets, discards

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Spawn a direct report: a crewmate in a treehouse worktree, or a secondmate in
-# its isolated firstmate home.
+# Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
+# secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
@@ -15,9 +15,9 @@
 #   $TMUX or HERDR_ENV=1; bin/fm-backend.sh's fm_backend_detect), then tmux.
 #   Spawn-capable backends are the reference tmux adapter and experimental
 #   herdr, zellij, and orca. Orca owns both the task worktree and terminal,
-#   so ship/scout Orca spawns do not run treehouse get. An auto-detected herdr spawn prints a loud stderr notice;
-#   auto-detected tmux stays silent; zellij is never auto-detected (always a
-#   dedicated background session, see bin/backends/zellij.sh). Default tmux
+#   so ship/scout Orca spawns do not run treehouse get. An auto-detected herdr
+#   spawn prints a loud stderr notice; auto-detected tmux stays silent; zellij
+#   and orca are never auto-detected (always explicit). Default tmux
 #   spawns do not write backend= to meta; absent backend= means tmux.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
