@@ -553,19 +553,19 @@ test_spawn_refuses_unknown_backend_flag() {
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" nope-backend-z1 projects/none claude --backend zellij 2>&1)
   status=$?
-  [ "$status" -ne 0 ] || fail "fm-spawn --backend zellij should refuse (P1 is tmux-only)"
+  [ "$status" -ne 0 ] || fail "fm-spawn --backend zellij should refuse"
   assert_contains "$out" "unknown backend 'zellij'" "fm-spawn did not name the rejected backend"
-  pass "fm-spawn.sh --backend zellij is refused loudly (tmux-only in P1)"
+  pass "fm-spawn.sh --backend zellij is refused loudly"
 }
 
 test_spawn_refuses_unknown_fm_backend_env() {
   local out status
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
-    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=orca \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=zellij \
     "$ROOT/bin/fm-spawn.sh" nope-backend-z2 projects/none claude 2>&1)
   status=$?
-  [ "$status" -ne 0 ] || fail "FM_BACKEND=orca should refuse (P1 is tmux-only)"
-  assert_contains "$out" "unknown backend 'orca'" "fm-spawn did not name the rejected FM_BACKEND"
+  [ "$status" -ne 0 ] || fail "FM_BACKEND=zellij should refuse"
+  assert_contains "$out" "unknown backend 'zellij'" "fm-spawn did not name the rejected FM_BACKEND"
   pass "fm-spawn.sh honors FM_BACKEND and refuses an unimplemented value loudly"
 }
 

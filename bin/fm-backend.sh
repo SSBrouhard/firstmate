@@ -40,8 +40,9 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # section 4's harness-verification discipline. herdr is EXPERIMENTAL (P2;
 # data/fm-backend-design-d7/herdr-addendum.md) - verified against the real
 # v0.7.1/protocol-14 binary (data/fm-backend-design-d7/herdr-verification-p2.md)
-# but newer than tmux's long-proven default path.
-FM_BACKEND_KNOWN="tmux herdr"
+# but newer than tmux's long-proven default path. orca currently exposes only
+# terminal adapter primitives; spawn/teardown lifecycle wiring is a later slice.
+FM_BACKEND_KNOWN="tmux herdr orca"
 
 # fm_backend_is_known: 0 iff <name> has a verified adapter.
 fm_backend_is_known() {  # <name>
@@ -182,6 +183,13 @@ fm_backend_source() {  # <name>
         _FM_BACKEND_HERDR_SOURCED=1
       fi
       ;;
+    orca)
+      if [ -z "${_FM_BACKEND_ORCA_SOURCED:-}" ]; then
+        # shellcheck source=bin/backends/orca.sh
+        . "$FM_BACKEND_LIB_DIR/backends/orca.sh"
+        _FM_BACKEND_ORCA_SOURCED=1
+      fi
+      ;;
   esac
 }
 
@@ -239,6 +247,7 @@ fm_backend_capture() {  # <backend> <target> <lines>
   case "$backend" in
     tmux) fm_backend_tmux_capture "$@" ;;
     herdr) fm_backend_herdr_capture "$@" ;;
+    orca) fm_backend_orca_capture "$@" ;;
     *) echo "error: no capture implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -251,6 +260,7 @@ fm_backend_send_key() {  # <backend> <target> <key>
   case "$backend" in
     tmux) fm_backend_tmux_send_key "$@" ;;
     herdr) fm_backend_herdr_send_key "$@" ;;
+    orca) fm_backend_orca_send_key "$@" ;;
     *) echo "error: no send-key implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -265,6 +275,7 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   case "$backend" in
     tmux) fm_backend_tmux_send_text_submit "$@" ;;
     herdr) fm_backend_herdr_send_text_submit "$@" ;;
+    orca) fm_backend_orca_send_text_submit "$@" ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -279,6 +290,7 @@ fm_backend_kill() {  # <backend> <target>
   case "$backend" in
     tmux) fm_backend_tmux_kill "$@" ;;
     herdr) fm_backend_herdr_kill "$@" ;;
+    orca) fm_backend_orca_kill "$@" ;;
     *) echo "error: no kill implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -321,6 +333,10 @@ fm_backend_target_exists() {  # <backend> <target>
       pane=${target#*:}
       [ -n "$session" ] && [ -n "$pane" ] && [ "$pane" != "$target" ] || return 1
       HERDR_SESSION="$session" herdr pane get "$pane" >/dev/null 2>&1
+      ;;
+    orca)
+      fm_backend_source orca || return 1
+      orca terminal read --terminal "$target" --limit 1 --json >/dev/null 2>&1
       ;;
     *)
       return 1
