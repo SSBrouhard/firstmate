@@ -159,6 +159,11 @@ mkdir -p "$TMP/data"
 cat > "$TMP/data/projects.md" <<EOF
 - project [direct-PR +yolo] - Example project (added 2026-06-21)
 EOF
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" prepare prepared-mode fm-prepared-mode "$BRIEF" >/dev/null
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-mode thread-prepared-mode --kind scout --project "$PROJECT" --worktree "$WT" >/dev/null
+grep -qx 'mode=direct-PR' "$TMP/state/prepared-mode.meta"
+grep -qx 'yolo=on' "$TMP/state/prepared-mode.meta"
+
 FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-2 "$PROJECT" --kind scout --thread-name fm-adopted --worktree "$WT" >/dev/null
 ADOPTED_META="$TMP/state/adopted.meta"
 grep -qx 'backend=codex-app' "$ADOPTED_META"

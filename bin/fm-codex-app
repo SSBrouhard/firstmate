@@ -314,6 +314,7 @@ async function main() {
     if (existing && existing.taskId !== taskId) {
       throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
     }
+    const projectMode = resolveProjectMode(projectPath);
     writeMeta(taskId, {
       window: threadId,
       thread_id: threadId,
@@ -323,8 +324,8 @@ async function main() {
       codex_app_worktree_owner: worktreeOwner,
       harness: flags.harness || meta.harness || "codex",
       kind,
-      mode: flags.mode || meta.mode,
-      yolo: flags.yolo || meta.yolo,
+      mode: flags.mode || meta.mode || projectMode.mode,
+      yolo: flags.yolo || meta.yolo || projectMode.yolo,
       codex_app_pending_worktree_id: flags.pending_worktree_id,
       codex_app_thread_state: "visible",
       codex_app_pending_action: "none",
