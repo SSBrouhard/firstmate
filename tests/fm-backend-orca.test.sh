@@ -227,6 +227,41 @@ test_worktree_create_removes_worktree_when_path_missing() {
   pass "fm_backend_orca_worktree_create: removes created worktree when path is missing"
 }
 
+test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails() {
+  local proj data state config id out status
+  id="orcapathlessz6"
+  proj="$TMP_ROOT/pathless-cleanup-project"
+  data="$TMP_ROOT/pathless-cleanup-data"
+  state="$TMP_ROOT/pathless-cleanup-state"
+  config="$TMP_ROOT/pathless-cleanup-config"
+  fm_git_init_commit "$proj"
+  mkdir -p "$data/$id" "$state" "$config"
+  printf 'brief\n' > "$data/$id/brief.md"
+  touch "$state/.last-watcher-beat"
+  orca_case pathless-cleanup-fail
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-pathless-cleanup"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-pathless-cleanup"}}}\n' > "$RESP/3.out"
+  printf '1\n' > "$RESP/4.exit"
+  printf '1\n' > "$RESP/5.exit"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "Orca spawn should fail when path parsing and cleanup fail"
+  assert_contains "$out" "orca worktree create did not return a path" \
+    "pathless worktree failure should explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-pathless-cleanup'$'\x1f''--force'$'\x1f''--json' \
+    "pathless cleanup should attempt helper-backed worktree removal"
+  assert_present "$state/$id.meta" "failed pathless cleanup should preserve metadata"
+  assert_grep "window=fm-$id" "$state/$id.meta" "preserved pathless metadata missing stable window alias"
+  assert_grep "backend=orca" "$state/$id.meta" "preserved pathless metadata missing backend=orca"
+  assert_grep "orca_worktree_id=wt-pathless-cleanup" "$state/$id.meta" "preserved pathless metadata missing Orca worktree id"
+  assert_no_grep "terminal=" "$state/$id.meta" "preserved pathless metadata should not invent a terminal handle"
+  pass "fm-spawn.sh --backend orca: preserves metadata when pathless cleanup fails"
+}
+
 test_spawn_writes_orca_metadata_and_launches_harness() {
   local proj wt data state config id out log
   id="orcaspawnz1"
@@ -654,6 +689,7 @@ test_remove_worktree_refuses_empty_id
 test_dispatcher_sources_orca_and_routes_primitives
 test_worktree_and_terminal_helpers_parse_json
 test_worktree_create_removes_worktree_when_path_missing
+test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails
 test_spawn_writes_orca_metadata_and_launches_harness
 test_spawn_refuses_orca_nonisolated_worktree
 test_spawn_removes_orca_worktree_when_terminal_create_fails

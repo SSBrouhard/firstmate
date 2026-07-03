@@ -682,7 +682,20 @@ EOF
       echo "error: backend=orca does not support --secondmate spawns yet" >&2
       exit 1
     fi
-    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W") || exit 1
+    set +e
+    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
+    ORCA_WT_STATUS=$?
+    set -e
+    if [ "$ORCA_WT_STATUS" -ne 0 ]; then
+      if [ "$ORCA_WT_STATUS" -eq 2 ] && [ -n "$ORCA_WT_RAW" ]; then
+        ORCA_WORKTREE_ID=${ORCA_WT_RAW%%$'\t'*}
+        if [ "$ORCA_WORKTREE_ID" != "$ORCA_WT_RAW" ] && [ -n "$ORCA_WORKTREE_ID" ]; then
+          WT=${ORCA_WT_RAW#*$'\t'}
+          ORCA_ABORT_CLEANUP=1
+        fi
+      fi
+      exit 1
+    fi
     ORCA_WORKTREE_ID=${ORCA_WT_RAW%%$'\t'*}
     WT=${ORCA_WT_RAW#*$'\t'}
     ORCA_ABORT_CLEANUP=1
