@@ -24,6 +24,7 @@ New spawns choose the backend in this order: explicit `fm-spawn.sh --backend <na
 If both runtime markers are present, `$TMUX` wins because tmux is the innermost surface firstmate is running on.
 Auto-detected herdr prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
 Any value other than `tmux` or `herdr` is rejected until another adapter is implemented and verified.
+The proposed Codex App visible-thread backend protocol lives in [`docs/codex-app-backend.md`](codex-app-backend.md), but `codex-app` is not a valid upstream backend setting yet.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
