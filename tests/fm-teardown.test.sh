@@ -261,6 +261,7 @@ run_teardown() {
   local case_dir=$1; shift
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_DATA_OVERRIDE="${FM_DATA_OVERRIDE:-$case_dir/data}" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:$PATH" \
     "$TEARDOWN" task-x1 "$@"
@@ -655,6 +656,83 @@ test_gh_error_and_content_absent_refuses() {
   pass "gh lookup error with content not in default refuses (fail-safe)"
 }
 
+test_codex_app_teardown_refuses_visible_thread() {
+  local case_dir rc
+  case_dir=$(make_case codex-visible)
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "backend=codex-app" \
+    "window=thread-visible" \
+    "thread_id=thread-visible" \
+    "codex_app_thread_state=visible" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=scout" \
+    "mode=no-mistakes"
+  mkdir -p "$case_dir/data/task-x1"
+  printf 'report\n' > "$case_dir/data/task-x1/report.md"
+
+  set +e
+  FM_DATA_OVERRIDE="$case_dir/data" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "codex-visible: teardown should refuse a visible Codex App thread"
+  grep -q 'not marked archived' "$case_dir/stderr" || fail "codex-visible: refusal did not require mark-archived"
+  [ -f "$case_dir/state/task-x1.meta" ] || fail "codex-visible: refused teardown removed meta"
+  pass "Codex App teardown refuses visible threads until mark-archived"
+}
+
+test_codex_app_teardown_refuses_archived_missing_worktree() {
+  local case_dir rc
+  case_dir=$(make_case codex-missing-wt)
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "backend=codex-app" \
+    "window=thread-archived" \
+    "thread_id=thread-archived" \
+    "codex_app_thread_state=archived" \
+    "codex_app_archived=1" \
+    "worktree=" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "codex-missing-wt: teardown should refuse archived Codex App ship with no worktree"
+  grep -q 'no existing worktree' "$case_dir/stderr" || fail "codex-missing-wt: refusal did not cite missing worktree"
+  [ -f "$case_dir/state/task-x1.meta" ] || fail "codex-missing-wt: refused teardown removed meta"
+  pass "Codex App teardown refuses protected tasks without a real worktree"
+}
+
+test_codex_app_teardown_allows_archived_scout_with_report() {
+  local case_dir rc
+  case_dir=$(make_case codex-archived-scout)
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "backend=codex-app" \
+    "window=thread-archived" \
+    "thread_id=thread-archived" \
+    "codex_app_thread_state=archived" \
+    "codex_app_archived=1" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=scout" \
+    "mode=no-mistakes"
+  mkdir -p "$case_dir/data/task-x1"
+  printf 'report\n' > "$case_dir/data/task-x1/report.md"
+
+  set +e
+  FM_DATA_OVERRIDE="$case_dir/data" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "codex-archived-scout: teardown should allow archived Codex App scout with report"
+  [ ! -f "$case_dir/state/task-x1.meta" ] || fail "codex-archived-scout: successful teardown left meta behind"
+  pass "Codex App teardown allows archived scout tasks only after the report gate"
+}
+
 test_local_only_force_overrides_unpushed() {
   local case_dir rc
   case_dir=$(make_case force-override)
@@ -690,3 +768,6 @@ test_content_in_default_fallback_allows
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses
+test_codex_app_teardown_refuses_visible_thread
+test_codex_app_teardown_refuses_archived_missing_worktree
+test_codex_app_teardown_allows_archived_scout_with_report

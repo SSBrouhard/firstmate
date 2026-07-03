@@ -14,12 +14,14 @@ It writes pending task metadata with `backend=codex-app`, `window=<thread-name>`
 After Codex Desktop has a real thread, record it with:
 
 ```sh
-bin/fm-codex-app record-thread <task-id> <thread-id> [--turn-id <id>] [--worktree <path>] [--pending-worktree-id <id>]
+bin/fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --project <path> --worktree <path> [--turn-id <id>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--pending-worktree-id <id>]
 ```
 
 That changes `window=` to the thread id, records `thread_id=`, sets `codex_app_thread_state=visible`, and clears the pending action.
 `record-pending` stores a pending worktree id when Desktop has created a worktree request but the final thread id is not known yet.
-`record-thread` can also record `turn_id=`, `worktree=`, and `codex_app_pending_worktree_id=`.
+`record-thread` requires protected task state: `kind=ship|scout`, an existing project directory, and an existing worktree directory must already be recorded in the prepared meta or supplied as flags.
+That prevents a prepared visible thread from becoming a default ship task that teardown cannot validate for landed work or scout report delivery.
+`prepare` refuses an existing task id unless the existing metadata is the same pending Codex App task, so it cannot overwrite a live route.
 
 To bring an already-visible Desktop thread under firstmate supervision, use:
 

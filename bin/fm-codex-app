@@ -30,7 +30,7 @@ const STATE = process.env.FM_STATE_OVERRIDE || path.join(HOME, "state");
 function usage() {
   console.error(`usage:
   fm-codex-app prepare <task-id> <thread-name> <brief-file>
-  fm-codex-app record-thread <task-id> <thread-id> [--turn-id <id>] [--worktree <path>] [--pending-worktree-id <id>]
+  fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --project <path> --worktree <path> [--turn-id <id>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--pending-worktree-id <id>]
   fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
   fm-codex-app record-pending <task-id> <pending-worktree-id>
   fm-codex-app record-capture <task-id> <capture-file|->
@@ -84,6 +84,20 @@ function ensureCodexAppMeta(taskId, action) {
     throw new Error(`${action} requires backend=codex-app meta for task ${taskId}; refusing to overwrite ${meta.backend || "tmux/default"} routing`);
   }
   return meta;
+}
+
+function validateProtectedTaskState(kind, projectPath, worktreePath, action) {
+  if (kind !== "ship" && kind !== "scout") {
+    throw new Error(`${action} requires --kind ship or --kind scout`);
+  }
+  if (!projectPath) throw new Error(`${action} requires project metadata for ${kind} tasks`);
+  if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
+    throw new Error(`${action} requires project to name an existing directory: ${projectPath}`);
+  }
+  if (!worktreePath) throw new Error(`${action} requires --worktree for ${kind} tasks`);
+  if (!fs.existsSync(worktreePath) || !fs.statSync(worktreePath).isDirectory()) {
+    throw new Error(`${action} requires --worktree to name an existing directory: ${worktreePath}`);
+  }
 }
 
 function writeMeta(taskId, values) {
@@ -195,6 +209,16 @@ async function main() {
     const [taskId, threadName, briefFile] = args;
     if (!taskId || !threadName || !briefFile) usage();
     if (!fs.existsSync(briefFile)) throw new Error(`brief not found: ${briefFile}`);
+    if (fs.existsSync(metaPath(taskId))) {
+      const meta = ensureCodexAppMeta(taskId, "prepare");
+      const samePendingTask = !meta.thread_id
+        && (meta.codex_app_thread_state || "pending") === "pending"
+        && (meta.window === threadName || meta.codex_app_thread_name === threadName)
+        && meta.codex_app_brief === briefFile;
+      if (!samePendingTask) {
+        throw new Error(`prepare refuses existing meta for task ${taskId}; choose a new id or record/adopt the existing Codex App task`);
+      }
+    }
     writeMeta(taskId, {
       backend: "codex-app",
       window: threadName,
@@ -215,8 +239,12 @@ async function main() {
     const [taskId, threadId, ...rest] = args;
     if (!taskId || !threadId) usage();
     ensureMetaExists(taskId, "record-thread");
-    ensureCodexAppMeta(taskId, "record-thread");
+    const meta = ensureCodexAppMeta(taskId, "record-thread");
     const flags = parseFlags(rest);
+    const kind = flags.kind || meta.kind;
+    const projectPath = flags.project || meta.project;
+    const worktreePath = flags.worktree || meta.worktree;
+    validateProtectedTaskState(kind, projectPath, worktreePath, "record-thread");
     const existing = taskForThread(threadId);
     if (existing && existing.taskId !== taskId) {
       throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
@@ -225,7 +253,12 @@ async function main() {
       window: threadId,
       thread_id: threadId,
       turn_id: flags.turn_id,
-      worktree: flags.worktree,
+      project: projectPath,
+      worktree: worktreePath,
+      harness: flags.harness || meta.harness || "codex",
+      kind,
+      mode: flags.mode || meta.mode,
+      yolo: flags.yolo || meta.yolo,
       codex_app_pending_worktree_id: flags.pending_worktree_id,
       codex_app_thread_state: "visible",
       codex_app_pending_action: "none",
@@ -243,11 +276,7 @@ async function main() {
     const existing = taskForThread(threadId);
     if (existing) throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
     const kind = flags.kind;
-    if (kind !== "ship" && kind !== "scout") throw new Error("adopt-thread requires --kind ship or --kind scout");
-    if (!flags.worktree) throw new Error("adopt-thread requires --worktree for ship and scout tasks");
-    if (!fs.existsSync(flags.worktree) || !fs.statSync(flags.worktree).isDirectory()) {
-      throw new Error(`adopt-thread requires --worktree to name an existing directory: ${flags.worktree}`);
-    }
+    validateProtectedTaskState(kind, projectPath, flags.worktree, "adopt-thread");
     const projectMode = resolveProjectMode(projectPath);
     writeMeta(taskId, {
       backend: "codex-app",

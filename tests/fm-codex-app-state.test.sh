@@ -6,12 +6,17 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-codex-app-state.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/state"
+PROJECT="$TMP/project"
+mkdir -p "$PROJECT"
+WT="$TMP/wt"
+mkdir -p "$WT"
 ID=state-test
 META="$TMP/state/$ID.meta"
 cat > "$META" <<EOF
 backend=codex-app
 window=fm-$ID
-project=/tmp/example
+project=$PROJECT
+worktree=$WT
 harness=codex
 kind=scout
 mode=no-mistakes
@@ -31,7 +36,8 @@ PENDING_META="$TMP/state/$PENDING_ID.meta"
 cat > "$PENDING_META" <<EOF
 backend=codex-app
 window=fm-$PENDING_ID
-project=/tmp/example
+project=$PROJECT
+worktree=$WT
 harness=codex
 kind=scout
 mode=no-mistakes
@@ -58,6 +64,28 @@ FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" mark-archived "$ID" >/dev/null
 grep -qx 'codex_app_archived=1' "$META"
 grep -qx 'codex_app_thread_state=archived' "$META"
 
+BRIEF="$TMP/brief.md"
+printf 'brief\n' > "$BRIEF"
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" prepare prepared-thread fm-prepared "$BRIEF" >/dev/null
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" prepare prepared-thread fm-prepared "$BRIEF" >/dev/null
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" prepare prepared-thread fm-other "$BRIEF" 2>"$TMP/prepare-overwrite.err"; then
+  echo "expected prepare to refuse changing existing pending meta" >&2
+  exit 1
+fi
+grep -q 'prepare refuses existing meta' "$TMP/prepare-overwrite.err"
+
+cat > "$TMP/state/live-task.meta" <<EOF
+backend=codex-app
+window=thread-live
+thread_id=thread-live
+codex_app_thread_state=visible
+EOF
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" prepare live-task fm-live "$BRIEF" 2>"$TMP/prepare-live.err"; then
+  echo "expected prepare to refuse existing visible meta" >&2
+  exit 1
+fi
+grep -q 'prepare refuses existing meta' "$TMP/prepare-live.err"
+
 cat > "$TMP/state/other.meta" <<EOF
 backend=codex-app
 window=fm-other
@@ -66,7 +94,8 @@ EOF
 cat > "$TMP/state/third.meta" <<EOF
 backend=codex-app
 window=fm-third
-project=/tmp/example
+project=$PROJECT
+worktree=$WT
 harness=codex
 kind=scout
 mode=no-mistakes
@@ -98,18 +127,32 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread not-codex thread-not-co
 fi
 grep -q 'requires backend=codex-app meta' "$TMP/not-codex.err"
 
+cat > "$TMP/state/prepared-unsafe.meta" <<EOF
+backend=codex-app
+window=fm-prepared-unsafe
+codex_app_thread_state=pending
+EOF
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-unsafe 2>"$TMP/unsafe-record.err"; then
+  echo "expected record-thread without protected task state to fail" >&2
+  exit 1
+fi
+grep -q 'requires --kind ship or --kind scout' "$TMP/unsafe-record.err"
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-safe --kind scout --project "$PROJECT" --worktree "$WT" >/dev/null
+grep -qx 'kind=scout' "$TMP/state/prepared-unsafe.meta"
+grep -qx "project=$PROJECT" "$TMP/state/prepared-unsafe.meta"
+grep -qx "worktree=$WT" "$TMP/state/prepared-unsafe.meta"
+
 mkdir -p "$TMP/data"
 cat > "$TMP/data/projects.md" <<EOF
-- example [direct-PR +yolo] - Example project (added 2026-06-21)
+- project [direct-PR +yolo] - Example project (added 2026-06-21)
 EOF
-mkdir -p "$TMP/wt"
-FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-2 /tmp/example --kind scout --thread-name fm-adopted --worktree "$TMP/wt" >/dev/null
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-2 "$PROJECT" --kind scout --thread-name fm-adopted --worktree "$WT" >/dev/null
 ADOPTED_META="$TMP/state/adopted.meta"
 grep -qx 'backend=codex-app' "$ADOPTED_META"
 grep -qx 'window=thread-2' "$ADOPTED_META"
 grep -qx 'codex_app_thread_name=fm-adopted' "$ADOPTED_META"
-grep -qx "worktree=$TMP/wt" "$ADOPTED_META"
-grep -qx 'project=/tmp/example' "$ADOPTED_META"
+grep -qx "worktree=$WT" "$ADOPTED_META"
+grep -qx "project=$PROJECT" "$ADOPTED_META"
 grep -qx 'harness=codex' "$ADOPTED_META"
 grep -qx 'kind=scout' "$ADOPTED_META"
 grep -qx 'mode=direct-PR' "$ADOPTED_META"
@@ -118,25 +161,25 @@ grep -qx 'thread_id=thread-2' "$ADOPTED_META"
 grep -qx 'codex_app_thread_state=visible' "$ADOPTED_META"
 grep -qx 'codex_app_pending_action=none' "$ADOPTED_META"
 
-if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread no-worktree thread-no-worktree /tmp/example --kind scout 2>"$TMP/no-worktree.err"; then
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread no-worktree thread-no-worktree "$PROJECT" --kind scout 2>"$TMP/no-worktree.err"; then
   echo "expected adoption without worktree to fail" >&2
   exit 1
 fi
 grep -q 'requires --worktree' "$TMP/no-worktree.err"
 
-if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread missing-worktree thread-missing-worktree /tmp/example --kind scout --worktree "$TMP/missing-wt" 2>"$TMP/missing-worktree.err"; then
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread missing-worktree thread-missing-worktree "$PROJECT" --kind scout --worktree "$TMP/missing-wt" 2>"$TMP/missing-worktree.err"; then
   echo "expected adoption with missing worktree to fail" >&2
   exit 1
 fi
 grep -q 'existing directory' "$TMP/missing-worktree.err"
 
-if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-3 /tmp/example --kind scout 2>"$TMP/duplicate-task.err"; then
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-3 "$PROJECT" --kind scout 2>"$TMP/duplicate-task.err"; then
   echo "expected duplicate task adoption to fail" >&2
   exit 1
 fi
 grep -q 'already has meta' "$TMP/duplicate-task.err"
 
-if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted-other thread-2 /tmp/example --kind scout 2>"$TMP/duplicate-thread.err"; then
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted-other thread-2 "$PROJECT" --kind scout 2>"$TMP/duplicate-thread.err"; then
   echo "expected duplicate thread adoption to fail" >&2
   exit 1
 fi

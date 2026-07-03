@@ -109,6 +109,27 @@ require_codex_app_archived_for_teardown() {
   exit 1
 }
 
+require_codex_app_teardown_state() {
+  [ "$BACKEND" = codex-app ] || return 0
+  [ "$FORCE" != "--force" ] || return 0
+  case "$KIND" in
+    ship|scout)
+      if [ -z "$PROJ" ] || [ ! -d "$PROJ" ]; then
+        echo "REFUSED: Codex App $KIND task $ID has no existing project directory recorded for teardown safety." >&2
+        exit 1
+      fi
+      if [ -z "$WT" ] || [ ! -d "$WT" ]; then
+        echo "REFUSED: Codex App $KIND task $ID has no existing worktree recorded for teardown safety." >&2
+        exit 1
+      fi
+      git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+        echo "REFUSED: Codex App $KIND task $ID worktree is not a git worktree: $WT" >&2
+        exit 1
+      }
+      ;;
+  esac
+}
+
 remove_grok_turnend_auth() {
   local state_dir=$1 id=$2 token hooks_dir
   token=$(cat "$state_dir/$id.grok-turnend-token" 2>/dev/null || true)
@@ -580,6 +601,7 @@ if [ "$KIND" = secondmate ]; then
 fi
 
 require_codex_app_archived_for_teardown
+require_codex_app_teardown_state
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
   SUB_STATE="$HOME_PATH/state"
@@ -675,7 +697,11 @@ if [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   ( cd "$PROJ" && treehouse return --force "$WT" )
 fi
 
-fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
+if [ "$BACKEND" = codex-app ]; then
+  fm_backend_kill "$BACKEND" "$T" || exit 1
+else
+  fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
+fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
