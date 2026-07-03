@@ -18,7 +18,13 @@ bin/fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --proje
 ```
 
 That changes `window=` to the thread id, records `thread_id=`, sets `codex_app_thread_state=visible`, and clears the pending action.
-`record-pending` stores a pending worktree id when Desktop has created a worktree request but the final thread id is not known yet.
+When Desktop starts a handoff before the final visible thread id is known, record the pending worktree request with:
+
+```sh
+bin/fm-codex-app record-pending <task-id> <pending-worktree-id>
+```
+
+This records `codex_app_pending_worktree_id=`, sets `codex_app_thread_state=pending-worktree`, and leaves `codex_app_pending_action=await_thread_id` until `record-thread` supplies the final thread id.
 `record-thread` requires protected task state: `kind=ship|scout`, an existing git project directory, and an existing registered linked worktree root must already be recorded in the prepared meta or supplied as flags.
 That prevents a prepared visible thread from becoming a default ship task that teardown cannot validate for landed work or scout report delivery.
 The ledger records `codex_app_worktree_owner=external`; this slice does not accept treehouse ownership for Codex App visible-thread worktrees because Desktop, not firstmate, owns the thread/worktree lifecycle.
