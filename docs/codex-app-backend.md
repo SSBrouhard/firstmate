@@ -19,7 +19,7 @@ bin/fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --proje
 
 That changes `window=` to the thread id, records `thread_id=`, sets `codex_app_thread_state=visible`, and clears the pending action.
 `record-pending` stores a pending worktree id when Desktop has created a worktree request but the final thread id is not known yet.
-`record-thread` requires protected task state: `kind=ship|scout`, an existing project directory, and an existing worktree directory must already be recorded in the prepared meta or supplied as flags.
+`record-thread` requires protected task state: `kind=ship|scout`, an existing git project directory, and an existing registered linked worktree root must already be recorded in the prepared meta or supplied as flags.
 That prevents a prepared visible thread from becoming a default ship task that teardown cannot validate for landed work or scout report delivery.
 `prepare` refuses an existing task id unless the existing metadata is the same pending Codex App task, so it cannot overwrite a live route.
 
@@ -30,7 +30,7 @@ bin/fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|
 ```
 
 Adoption refuses duplicate task ids and duplicate thread ids.
-`--worktree` must name an existing directory for both ship and scout tasks.
+`--worktree` must name an existing registered linked worktree root for the project, distinct from the project checkout, for both ship and scout tasks.
 When `--harness` is omitted, adoption records `harness=codex`.
 If `--mode` or `--yolo` is omitted, it resolves the project mode from `data/projects.md` and falls back to `no-mistakes`/`off`.
 
@@ -62,6 +62,7 @@ bin/fm-codex-app mark-archived <task-id>
 Archived threads report `status=archived`; the backend maps that to `idle`.
 Visible or pending threads report unknown busy state, so supervision does not claim a live Desktop thread is idle without an explicit archived marker.
 `fm-teardown.sh` refuses codex-app tasks until the thread is archived in Desktop and marked archived in the ledger.
+It also validates the recorded project and worktree before removal; `--force` does not bypass the Codex App archive marker or the project-checkout/registered-worktree safety checks.
 
 `codex-app` is not selectable for new spawns through `--backend`, `FM_BACKEND`, or `config/backend` until a complete visible-thread spawn lifecycle exists.
 Use `prepare`, `record-thread`, or `adopt-thread` to create codex-app metadata for Desktop-owned visible threads.
