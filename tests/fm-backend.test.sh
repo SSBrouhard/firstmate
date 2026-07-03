@@ -204,10 +204,10 @@ test_backend_name_explicit_beats_detection() {
 test_backend_validate_refuses_unknown() {
   fm_backend_validate tmux 2>/dev/null || fail "fm_backend_validate should accept tmux"
   fm_backend_validate codex-app 2>/dev/null || fail "fm_backend_validate should accept codex-app for adopted metadata"
-  if fm_backend_validate_spawnable codex-app 2>"$TMP_ROOT/codex-spawnable.err"; then
-    fail "fm_backend_validate_spawnable should refuse codex-app until spawn lifecycle exists"
+  if fm_backend_validate_spawn codex-app 2>"$TMP_ROOT/codex-spawnable.err"; then
+    fail "fm_backend_validate_spawn should refuse codex-app until spawn lifecycle exists"
   fi
-  assert_contains "$(cat "$TMP_ROOT/codex-spawnable.err")" "cannot create new shell endpoints yet" \
+  assert_contains "$(cat "$TMP_ROOT/codex-spawnable.err")" "does not support task spawning yet" \
     "codex-app spawn refusal did not explain the visible-thread path"
   local out
   out=$(fm_backend_validate zellij 2>&1) && fail "fm_backend_validate should refuse zellij (P1 has no such adapter)"
@@ -654,14 +654,14 @@ test_spawn_refuses_codex_app_selection() {
     "$ROOT/bin/fm-spawn.sh" nope-codex-z1 projects/none claude --backend codex-app 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "fm-spawn --backend codex-app should refuse until spawn lifecycle exists"
-  assert_contains "$out" "cannot create new shell endpoints yet" "codex-app --backend refusal did not explain the restriction"
+  assert_contains "$out" "does not support task spawning yet" "codex-app --backend refusal did not explain the restriction"
 
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=codex-app \
     "$ROOT/bin/fm-spawn.sh" nope-codex-z2 projects/none claude 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "FM_BACKEND=codex-app should refuse until spawn lifecycle exists"
-  assert_contains "$out" "cannot create new shell endpoints yet" "codex-app FM_BACKEND refusal did not explain the restriction"
+  assert_contains "$out" "does not support task spawning yet" "codex-app FM_BACKEND refusal did not explain the restriction"
 
   config="$TMP_ROOT/codex-config-backend"
   mkdir -p "$config"
@@ -671,7 +671,7 @@ test_spawn_refuses_codex_app_selection() {
     "$ROOT/bin/fm-spawn.sh" nope-codex-z3 projects/none claude 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "config/backend=codex-app should refuse until spawn lifecycle exists"
-  assert_contains "$out" "cannot create new shell endpoints yet" "codex-app config/backend refusal did not explain the restriction"
+  assert_contains "$out" "does not support task spawning yet" "codex-app config/backend refusal did not explain the restriction"
 
   pass "fm-spawn.sh refuses codex-app from --backend, FM_BACKEND, and config/backend until spawn lifecycle exists"
 }

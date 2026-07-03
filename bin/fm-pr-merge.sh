@@ -87,8 +87,4 @@ if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
 
-if [ "${#merge_args[@]}" -gt 0 ]; then
-  gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]}" "$@"
-else
-  gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "$@"
-fi
+gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]}" "$@"
