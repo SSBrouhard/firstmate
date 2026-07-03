@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Codex App visible-thread backend adapter.
+# The Codex Desktop app owns thread IO; this adapter exposes firstmate's local
+# ledger as a backend target and refuses operations that must happen in Desktop.
 
 fm_backend_codex_app_cmd() {
   "$FM_BACKEND_LIB_DIR/fm-codex-app" "$@"

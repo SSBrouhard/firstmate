@@ -13,7 +13,9 @@
 #   spawn. Without it, the script resolves FM_BACKEND, then config/backend, then
 #   runtime auto-detection (the runtime firstmate itself is executing inside -
 #   $TMUX or HERDR_ENV=1; bin/fm-backend.sh's fm_backend_detect), then tmux.
-#   Known backends are the reference tmux adapter and experimental herdr. An
+#   Known spawn-created backends are the reference tmux adapter and experimental
+#   herdr. codex-app is a visible-thread ledger for Codex Desktop-owned threads,
+#   recorded/adopted through bin/fm-codex-app instead of created here. An
 #   auto-detected herdr spawn prints a loud stderr notice; auto-detected tmux
 #   stays silent. Default tmux spawns do not write backend= to meta; absent
 #   backend= means tmux.

@@ -19,7 +19,7 @@ When nothing is explicitly configured, `bin/fm-backend.sh`'s `fm_backend_detect`
 An auto-detected herdr spawn prints one loud stderr notice (set `config/backend` or pass `--backend tmux` to opt out).
 Auto-detecting tmux stays silent, since that reproduces today's unconfigured default byte-for-byte.
 Only when none of that resolves anything does firstmate fall back to the hard default, tmux.
-Absent `backend=` in a task's meta always means `tmux`; only a herdr task ever carries an explicit `backend=herdr` line.
+Absent `backend=` in a task's meta always means `tmux`; herdr tasks carry `backend=herdr`, while other non-tmux adapters such as `codex-app` carry their own explicit backend value.
 A herdr spawn refuses loudly if `herdr` or `jq` is missing, or if the installed herdr's protocol is older than the verified minimum (`fm_backend_herdr_version_check`).
 
 ## Worktree provider stays treehouse

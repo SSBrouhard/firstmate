@@ -12,12 +12,14 @@
 # `config/backend`, and behind runtime auto-detection when firstmate itself is
 # running inside herdr with no explicit backend setting; see herdr-addendum.md and
 # data/fm-backend-design-d7/herdr-verification-p2.md for its empirical basis.
+# The codex-app adapter is a visible-thread ledger for Codex Desktop-owned
+# threads: it records/captures local state and refuses to impersonate the app.
 #
 # Compatibility contract: a task's meta may omit `backend=`; every reader here
 # treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
 # `backend=tmux` for a default-backend task, so existing and newly spawned
-# default-path metas stay byte-identical. Only a task spawned on a non-tmux
-# backend, currently experimental herdr, carries an explicit `backend=` line.
+# default-path metas stay byte-identical. Only a task on a non-tmux backend
+# carries an explicit `backend=` line.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -40,7 +42,8 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # section 4's harness-verification discipline. herdr is EXPERIMENTAL (P2;
 # data/fm-backend-design-d7/herdr-addendum.md) - verified against the real
 # v0.7.1/protocol-14 binary (data/fm-backend-design-d7/herdr-verification-p2.md)
-# but newer than tmux's long-proven default path.
+# but newer than tmux's long-proven default path. codex-app is app-owned visible
+# thread state, not a headless task creator.
 FM_BACKEND_KNOWN="tmux herdr codex-app"
 
 # fm_backend_is_known: 0 iff <name> has a verified adapter.
@@ -297,7 +300,8 @@ fm_backend_kill() {  # <backend> <target>
 # fm_backend_busy_state: semantic busy/idle/unknown for backends that expose
 # native agent-state (herdr-addendum "busy state" row - the first backend
 # where this gets real semantics beyond pane-regex). Backends with no such
-# primitive (tmux) report unknown. Callers own the fallback policy: fm-watch.sh
+# primitive (tmux, visible codex-app threads before archive) report unknown.
+# Callers own the fallback policy: fm-watch.sh
 # uses unknown as the cue for its pane-hash + FM_BUSY_REGEX detection, while
 # fm-crew-state.sh also corroborates native idle verdicts before treating a
 # no-run crew as not busy.
@@ -318,8 +322,9 @@ fm_backend_busy_state() {  # <backend> <target>
 # going through fm_backend_herdr_target_ready (which auto-starts the herdr
 # server as a side effect via fm_backend_herdr_server_ensure - fine for an
 # operation that is about to use the pane, wrong for a passive liveness
-# probe). A gone tmux window or an unqueryable herdr pane (server down, pane
-# closed) both simply fail, which IS "does not exist" for this purpose.
+# probe). A gone tmux window, an unqueryable herdr pane (server down, pane
+# closed), or an unrecorded codex-app thread simply fail, which IS "does not
+# exist" for this purpose.
 # Mirrors fm-crew-state.sh's pane_readable check; exists here as one shared
 # primitive so callers that only need a fast alive/dead read (recovery
 # digests, the session-start fleet digest) do not re-derive it inline.

@@ -437,10 +437,10 @@ EOF
     if [ "$h" = "$prev" ]; then
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
-      # Busy match: a backend's native semantic state when available (herdr),
-      # else the last 6 non-blank lines only (the TUI footer area, where every
-      # verified harness renders its busy indicator) so busy-looking strings
-      # in displayed content cannot suppress stale detection.
+      # Busy match: a backend's native semantic state when available, else the
+      # last 6 non-blank lines only (the TUI footer area, where every verified
+      # harness renders its busy indicator) so busy-looking strings in displayed
+      # content cannot suppress stale detection.
       if [ "$n" -ge 2 ] && ! window_is_busy "$w" "$tail40"; then
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
