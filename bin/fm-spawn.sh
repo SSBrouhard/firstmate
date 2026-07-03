@@ -152,9 +152,30 @@ else
 fi
 fm_backend_validate_spawn "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
+if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
+  echo "error: backend=orca does not support --secondmate spawns yet" >&2
+  exit 1
+fi
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+
+parse_orca_worktree_result() {
+  local raw=$1 rest
+  ORCA_WORKTREE_ID=${raw%%$'\t'*}
+  if [ "$raw" = "$ORCA_WORKTREE_ID" ]; then
+    WT=
+    ORCA_TERMINAL=
+    return 1
+  fi
+  rest=${raw#*$'\t'}
+  WT=${rest%%$'\t'*}
+  if [ "$rest" != "$WT" ]; then
+    ORCA_TERMINAL=${rest#*$'\t'}
+  else
+    ORCA_TERMINAL=
+  fi
+}
 
 orca_spawn_abort_cleanup() {
   local status=$?
@@ -678,33 +699,28 @@ EOF
     T="$ZELLIJ_SES:$ZELLIJ_PANE_ID"
     ;;
   orca)
-    if [ "$KIND" = secondmate ]; then
-      echo "error: backend=orca does not support --secondmate spawns yet" >&2
-      exit 1
-    fi
     set +e
     ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
     ORCA_WT_STATUS=$?
     set -e
     if [ "$ORCA_WT_STATUS" -ne 0 ]; then
       if [ "$ORCA_WT_STATUS" -eq 2 ] && [ -n "$ORCA_WT_RAW" ]; then
-        ORCA_WORKTREE_ID=${ORCA_WT_RAW%%$'\t'*}
-        if [ "$ORCA_WORKTREE_ID" != "$ORCA_WT_RAW" ] && [ -n "$ORCA_WORKTREE_ID" ]; then
-          WT=${ORCA_WT_RAW#*$'\t'}
+        if parse_orca_worktree_result "$ORCA_WT_RAW" && [ -n "$ORCA_WORKTREE_ID" ]; then
           ORCA_ABORT_CLEANUP=1
         fi
       fi
       exit 1
     fi
-    ORCA_WORKTREE_ID=${ORCA_WT_RAW%%$'\t'*}
-    WT=${ORCA_WT_RAW#*$'\t'}
+    parse_orca_worktree_result "$ORCA_WT_RAW" || true
     ORCA_ABORT_CLEANUP=1
     if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
       echo "error: orca did not return a worktree id/path for $W" >&2
       exit 1
     fi
     validate_spawn_worktree "orca worktree create" "$W"
-    ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+    if [ -z "$ORCA_TERMINAL" ]; then
+      ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+    fi
     T="$ORCA_TERMINAL"
     ;;
 esac

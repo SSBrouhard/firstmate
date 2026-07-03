@@ -341,6 +341,16 @@ EOF
   return 1
 }
 
+inspectable_git_worktree() {
+  local target=$1 top
+  [ -n "$target" ] || return 1
+  [ -d "$target" ] || return 1
+  top=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ -n "$top" ] || return 1
+  [ -d "$top" ] || return 1
+  git -C "$top" rev-parse --git-dir >/dev/null 2>&1
+}
+
 firstmate_home_has_treehouse_slot() {
   local home=$1
   worktree_registered_for_project "$FM_ROOT" "$home"
@@ -628,6 +638,14 @@ fi
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
   cleanup_firstmate_home_children "$HOME_PATH"
+fi
+
+if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$FORCE" != "--force" ]; then
+  if ! inspectable_git_worktree "$WT"; then
+    echo "REFUSED: Orca ship task $ID has no inspectable git worktree at ${WT:-<missing>}." >&2
+    echo "Cannot verify dirty or unlanded work; restore the worktree path or get explicit OK to discard, then --force." >&2
+    exit 1
+  fi
 fi
 
 if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then

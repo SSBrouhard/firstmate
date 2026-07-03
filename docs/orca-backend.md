@@ -41,7 +41,7 @@ Spawn:
 
 1. Ensure the project repo is registered in Orca, adding it with `orca repo add --path` when needed.
 2. Create an independent Orca worktree with `orca worktree create --repo id:<repo> --name fm-<id> --no-parent --setup skip`.
-3. Create a titled terminal in that worktree with `orca terminal create --worktree id:<worktree> --title fm-<id>`.
+3. Reuse the terminal returned by Orca worktree creation, or create a titled terminal in that worktree when Orca returns only the worktree.
 4. Install firstmate's per-harness turn-end hooks in the Orca worktree.
 5. Write metadata, then send `GOTMPDIR` export and the selected harness launch through the recorded Orca terminal.
 
@@ -70,7 +70,7 @@ Teardown:
 
 Fake-Orca tests cover:
 
-- helper parsing for repo registration, worktree creation, terminal creation, terminal sends, and worktree removal;
+- helper parsing for repo registration, worktree creation, implicit-terminal reuse, terminal creation, terminal sends, and worktree removal;
 - `fm-spawn.sh --backend orca` metadata creation and harness launch;
 - `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` routing through recorded Orca metadata;
 - scout teardown releasing an Orca worktree through `orca worktree rm`.

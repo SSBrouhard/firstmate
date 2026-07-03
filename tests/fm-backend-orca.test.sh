@@ -215,13 +215,15 @@ test_worktree_create_removes_worktree_when_path_missing() {
   orca_case lifecycle-missing-path
   printf '1\n' > "$RESP/1.exit"
   printf '{"ok":true,"result":{"repo":{"id":"repo-no-path"}}}\n' > "$RESP/2.out"
-  printf '{"ok":true,"result":{"worktree":{"id":"wt-no-path"}}}\n' > "$RESP/3.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-no-path"},"terminal":{"handle":"term-no-path"}}}\n' > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "worktree helper should fail when Orca omits the worktree path"
   assert_contains "$out" "orca worktree create did not return a path for fm-task" \
     "worktree helper did not explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-no-path'$'\x1f''--json' \
+    "worktree helper did not close the implicit terminal when path parsing failed"
   assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-no-path'$'\x1f''--force'$'\x1f''--json' \
     "worktree helper did not remove the pathless Orca worktree"
   pass "fm_backend_orca_worktree_create: removes created worktree when path is missing"
@@ -278,8 +280,7 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   log="$LOG"
   printf '1\n' > "$RESP/1.exit"
   printf '{"ok":true,"result":{"repo":{"id":"repo-spawn"}}}\n' > "$RESP/2.out"
-  printf '{"ok":true,"result":{"worktree":{"id":"wt-spawn","path":"%s"}}}\n' "$wt" > "$RESP/3.out"
-  printf '{"ok":true,"result":{"terminal":{"handle":"term-spawn"}}}\n' > "$RESP/4.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-spawn","path":"%s"},"terminal":{"handle":"term-spawn"}}}\n' "$wt" > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
@@ -292,12 +293,41 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   assert_grep "terminal=term-spawn" "$state/$id.meta" "meta missing terminal handle"
   assert_grep "orca_worktree_id=wt-spawn" "$state/$id.meta" "meta missing Orca worktree id"
   assert_grep "worktree=$wt" "$state/$id.meta" "meta missing Orca worktree path"
+  assert_not_contains "$(cat "$log")" $'orca\x1f''terminal'$'\x1f''create' \
+    "spawn should reuse the implicit terminal returned by Orca worktree creation"
   assert_contains "$(cat "$log")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-spawn'$'\x1f''--text'$'\x1f''export GOTMPDIR=/tmp/fm-orcaspawnz1/gotmp'$'\x1f''--enter'$'\x1f''--json' \
     "spawn did not export GOTMPDIR through the Orca terminal"
   assert_contains "$(cat "$log")" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions" \
     "spawn did not send the selected harness launch command through Orca"
   rm -rf "/tmp/fm-$id"
-  pass "fm-spawn.sh --backend orca: creates Orca worktree/terminal, records metadata, launches harness"
+  pass "fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness"
+}
+
+test_spawn_refuses_orca_secondmate_before_home_mutation() {
+  local home subhome data state config id out status
+  id="orcasmz1"
+  home="$TMP_ROOT/secondmate-refusal-home"
+  subhome="$TMP_ROOT/secondmate-refusal-subhome"
+  data="$home/data"
+  state="$home/state"
+  config="$home/config"
+  mkdir -p "$data" "$state" "$config" "$subhome/bin" "$subhome/data" "$subhome/state" "$subhome/projects"
+  printf '%s\n' "$id" > "$subhome/.fm-secondmate-home"
+  printf 'firstmate\n' > "$subhome/AGENTS.md"
+  printf 'claude\n' > "$config/crew-harness"
+  touch "$state/.last-watcher-beat"
+  set +e
+  out=$( FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$subhome" claude --backend orca --secondmate 2>&1 )
+  status=$?
+  set +e
+  [ "$status" -ne 0 ] || fail "backend=orca --secondmate should be refused"
+  assert_contains "$out" "backend=orca does not support --secondmate spawns yet" \
+    "orca secondmate refusal should happen at backend selection"
+  assert_absent "$subhome/config/crew-harness" \
+    "orca secondmate refusal should not propagate inheritable config into the secondmate home"
+  pass "fm-spawn.sh --backend orca --secondmate: refuses before secondmate-home mutation"
 }
 
 test_spawn_refuses_orca_nonisolated_worktree() {
@@ -314,7 +344,7 @@ test_spawn_refuses_orca_nonisolated_worktree() {
   orca_case bad-spawn
   printf '1\n' > "$RESP/1.exit"
   printf '{"ok":true,"result":{"repo":{"id":"repo-bad"}}}\n' > "$RESP/2.out"
-  printf '{"ok":true,"result":{"worktree":{"id":"wt-bad","path":"%s"}}}\n' "$proj" > "$RESP/3.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-bad","path":"%s"},"terminal":{"handle":"term-bad"}}}\n' "$proj" > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
@@ -326,9 +356,11 @@ test_spawn_refuses_orca_nonisolated_worktree() {
   assert_absent "$state/$id.meta" "aborted Orca spawn must not record meta"
   assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create' \
     "Orca spawn should validate the worktree before creating a terminal"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-bad'$'\x1f''--json' \
+    "Orca spawn should close the implicit terminal after validation aborts"
   assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-bad'$'\x1f''--force'$'\x1f''--json' \
     "Orca spawn should remove the worktree after validation aborts"
-  pass "fm-spawn.sh --backend orca: refuses non-isolated worktrees before terminal creation"
+  pass "fm-spawn.sh --backend orca: refuses non-isolated worktrees and closes implicit terminals"
 }
 
 test_spawn_removes_orca_worktree_when_terminal_create_fails() {
@@ -527,6 +559,37 @@ test_teardown_removes_orca_worktree_when_path_missing() {
   pass "fm-teardown.sh backend=orca: releases terminal/worktree when path is absent"
 }
 
+test_ship_teardown_refuses_orca_missing_worktree_path() {
+  local proj wt data state config id out rc neutral
+  id="orcashipmissingz8"
+  proj="$TMP_ROOT/missing-ship-project"
+  wt="$TMP_ROOT/missing-ship-wt"
+  data="$TMP_ROOT/missing-ship-data"
+  state="$TMP_ROOT/missing-ship-state"
+  config="$TMP_ROOT/missing-ship-config"
+  fm_git_init_commit "$proj"
+  mkdir -p "$data/$id" "$state" "$config"
+  touch "$state/.last-watcher-beat"
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" "terminal=term-missing-ship" "worktree=$wt" "project=$proj" \
+    "harness=claude" "kind=ship" "mode=no-mistakes" "yolo=off" \
+    "backend=orca" "orca_worktree_id=wt-missing-ship"
+  orca_case missing-ship-path
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Orca ship teardown should refuse a missing worktree path"
+  assert_contains "$out" "no inspectable git worktree" \
+    "Orca ship teardown should explain the fail-closed worktree requirement"
+  [ ! -s "$LOG" ] || fail "refused Orca ship teardown should not close terminals or remove worktrees"
+  assert_present "$state/$id.meta" "refused Orca ship teardown should preserve metadata"
+  pass "fm-teardown.sh backend=orca: ship teardown fails closed when worktree path is missing"
+}
+
 test_teardown_refuses_orca_missing_worktree_id() {
   local proj wt data state config id out rc neutral
   id="orcamissingidz5"
@@ -691,6 +754,7 @@ test_worktree_and_terminal_helpers_parse_json
 test_worktree_create_removes_worktree_when_path_missing
 test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails
 test_spawn_writes_orca_metadata_and_launches_harness
+test_spawn_refuses_orca_secondmate_before_home_mutation
 test_spawn_refuses_orca_nonisolated_worktree
 test_spawn_removes_orca_worktree_when_terminal_create_fails
 test_spawn_preserves_orca_metadata_when_abort_cleanup_fails
@@ -698,6 +762,7 @@ test_spawn_releases_orca_resources_when_metadata_write_fails
 test_peek_send_and_crew_state_route_through_orca_meta
 test_scout_teardown_removes_orca_worktree_via_helper
 test_teardown_removes_orca_worktree_when_path_missing
+test_ship_teardown_refuses_orca_missing_worktree_path
 test_teardown_refuses_orca_missing_worktree_id
 test_teardown_removes_orca_worktree_without_terminal_handle
 test_secondmate_force_teardown_removes_orca_child_via_orca

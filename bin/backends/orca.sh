@@ -10,7 +10,7 @@ fm_backend_orca_tool_check() {
   command -v orca >/dev/null 2>&1 || { echo "error: backend=orca selected but the 'orca' CLI is not installed" >&2; return 1; }
 }
 
-fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle repo-id
+fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id
   local field=$1
   node -e '
 const fs = require("fs");
@@ -23,12 +23,21 @@ if (data.ok === false) {
 }
 const r = data.result || {};
 const wt = r.worktree || r.createdWorktree || r.item || r;
-const term = r.terminal || r.createdTerminal || r.tab || r.pane || r;
+const explicitTerm = r.terminal || r.createdTerminal || r.defaultTerminal || r.initialTerminal || wt.terminal || wt.createdTerminal || wt.defaultTerminal || wt.initialTerminal || r.tab || r.pane || null;
 const repo = r.repo || r.repository || r;
+function scalar(v) {
+  return (typeof v === "string" || typeof v === "number") ? String(v) : "";
+}
+function handle(obj, allowRootId) {
+  if (!obj) return "";
+  if (typeof obj === "string" || typeof obj === "number") return String(obj);
+  return scalar(obj.handle) || scalar(obj.terminal) || scalar(obj.terminalHandle) || scalar(obj.terminalId) || (allowRootId ? scalar(obj.id) : "") || "";
+}
 let v = "";
 if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
-if (field === "terminal-handle") v = term.handle || term.id || term.terminal || term.terminalHandle || r.handle || r.terminalId || "";
+if (field === "terminal-handle") v = handle(explicitTerm || r, true) || scalar(r.handle) || scalar(r.terminal) || scalar(r.terminalHandle) || scalar(r.terminalId) || "";
+if (field === "worktree-terminal-handle") v = handle(explicitTerm, true) || scalar(r.terminal) || scalar(r.terminalHandle) || scalar(r.terminalId) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));
@@ -52,20 +61,29 @@ fm_backend_orca_repo_ensure() {  # <project-path>
 }
 
 fm_backend_orca_worktree_create() {  # <project-path> <name>
-  local project=$1 name=$2 repo_id out wt_id wt_path
+  local project=$1 name=$2 repo_id out wt_id wt_path terminal
   repo_id=$(fm_backend_orca_repo_ensure "$project") || return 1
   out=$(orca worktree create --repo "id:$repo_id" --name "$name" --no-parent --setup skip --json) || return 1
   wt_id=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-id) || {
     echo "error: orca worktree create did not return a worktree id for $name" >&2
     return 1
   }
+  terminal=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-terminal-handle 2>/dev/null || true)
   wt_path=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-path) || {
     echo "error: orca worktree create did not return a path for $name" >&2
-    fm_backend_orca_remove_worktree "$wt_id" >/dev/null && return 1
-    printf '%s\t' "$wt_id"
+    [ -z "$terminal" ] || fm_backend_orca_kill "$terminal" >/dev/null 2>&1 || true
+    if fm_backend_orca_remove_worktree "$wt_id" >/dev/null; then
+      return 1
+    fi
+    if [ -n "$terminal" ]; then
+      printf '%s\t\t%s' "$wt_id" "$terminal"
+    else
+      printf '%s\t' "$wt_id"
+    fi
     return 2
   }
   printf '%s\t%s' "$wt_id" "$wt_path"
+  [ -z "$terminal" ] || printf '\t%s' "$terminal"
 }
 
 fm_backend_orca_terminal_create() {  # <worktree-id> <title>
