@@ -13,8 +13,8 @@
 #      diffs the two command logs byte-for-byte - the report's P1 checklist
 #      item "run current main scripts and refactored scripts against the same
 #      fake tools and compare command logs".
-#   3. Asserts the new `--backend`/`FM_BACKEND` selection refuses an unknown
-#      backend loudly (tmux is the only verified adapter in P1).
+#   3. Asserts backend selection refuses unknown adapters loudly and refuses
+#      metadata-only adapters such as codex-app for new spawns.
 #
 # fm-watch.sh's signal/stale/check/heartbeat wake-string contract is already
 # exercised end-to-end against this refactor by tests/fm-watch-triage.test.sh
