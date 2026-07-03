@@ -492,7 +492,7 @@ bin/fm-spawn.sh <id> projects/<repo> --harness codex --model gpt-5.5 --effort hi
 bin/fm-spawn.sh <id> projects/<repo> --backend tmux   # explicit runtime backend; tmux is the verified reference backend
 bin/fm-spawn.sh <id> projects/<repo> --backend herdr  # experimental herdr backend (docs/herdr-backend.md); version-gates at spawn
 bin/fm-spawn.sh <id> projects/<repo> --backend zellij # experimental zellij backend (docs/zellij-backend.md); version-gates at spawn
-# backend=orca is known for primitive terminal capture/send/close only; fm-spawn refuses it until Orca lifecycle wiring exists
+# backend=orca is known for primitive terminal capture/send/Enter/Ctrl-C/close only; fm-spawn refuses it until Orca lifecycle wiring exists
 bin/fm-spawn.sh <id> projects/<repo> --scout     # scout task; records kind=scout in meta
 bin/fm-spawn.sh <id> --secondmate                 # launch a registered persistent secondmate in its home
 bin/fm-spawn.sh <id> <firstmate-home> --secondmate   # launch or recover an explicit secondmate home
@@ -510,7 +510,7 @@ When `--model` or `--effort` is omitted, the corresponding meta value is `defaul
 For `kind=secondmate`, the same script launches in the registered or explicit firstmate home instead of running `treehouse get` for a project, records `home=` and `projects=`, and uses the charter brief as the launch prompt.
 
 For ship and scout tasks, the script creates the runtime endpoint (a tmux window by default, a herdr tab/pane when `backend=herdr`, or a zellij tab/pane when `backend=zellij`), runs `treehouse get`, waits for the worktree subshell, asserts the resolved worktree is a genuine isolated worktree distinct from the primary checkout (aborting the spawn otherwise, to prevent the worktree tangle of section 8), installs the turn-end hook, records `state/<id>.meta`, and launches the agent with the brief.
-Selecting `backend=orca` for a spawn fails before endpoint creation or meta writes because the Orca adapter currently exposes only terminal primitives for existing terminals.
+Selecting `backend=orca` for a spawn fails before endpoint creation or meta writes because the Orca adapter currently exposes only capture, text send, Enter/Ctrl-C keys, and close for existing terminals.
 For grok, the turn-end hook is one firstmate-owned global hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, activated only when the worktree holds the per-task `.fm-grok-turnend` token pointer that matches `state/<id>.grok-turnend-token`; teardown removes the pointer and token.
 For `kind=secondmate`, the script creates the same kind of runtime endpoint but starts directly in the persistent home.
 With herdr, ordinary crewmate and scout spawns use the current `FM_HOME` workspace; a primary `--secondmate` spawn uses the secondmate target home's workspace, so secondmate-owned tabs do not mix into the primary `firstmate` space.

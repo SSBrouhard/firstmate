@@ -2,9 +2,9 @@
 # bin/backends/orca.sh - the Orca terminal session-provider adapter.
 #
 # This slice intentionally exposes only terminal primitives for already-created
-# Orca terminals: capture, send text, special keys, and cleanup. Worktree
-# creation, terminal creation, spawn metadata, and teardown lifecycle wiring
-# belong to a later Orca backend slice.
+# Orca terminals: capture, send text, Enter/Ctrl-C keys, and close. Worktree
+# creation, terminal creation, spawn metadata, Escape key support, and teardown
+# lifecycle wiring are outside this primitive-only slice.
 #
 # Target string shape: the Orca terminal id accepted by `orca terminal ...`.
 

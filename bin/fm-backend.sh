@@ -292,7 +292,7 @@ fm_backend_capture() {  # <backend> <target> <lines> [expected-label]
   esac
 }
 
-# fm_backend_send_key: one named special key (Enter, Escape, C-c, ...).
+# fm_backend_send_key: one backend-supported named special key.
 fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
   local backend=$1
   shift

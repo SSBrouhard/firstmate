@@ -18,8 +18,8 @@ The file format is unchanged in both modes; tasks-axi and manual edits produce t
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
-The runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
-`tmux` is the verified reference backend; `herdr` and `zellij` are experimental backends (see [`docs/herdr-backend.md`](herdr-backend.md) and [`docs/zellij-backend.md`](zellij-backend.md)) - treehouse remains the worktree provider for all three, since herdr and zellij are session providers only.
+For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
+`tmux` is the verified reference backend; `herdr` and `zellij` are experimental spawn backends (see [`docs/herdr-backend.md`](herdr-backend.md) and [`docs/zellij-backend.md`](zellij-backend.md)) - treehouse remains the worktree provider for all three, since herdr and zellij are session providers only.
 `orca` is a known primitive-only adapter for already-created Orca terminals: capture, text send, Enter/Ctrl-C interrupt keys, and close are wired, but task spawning is refused until its lifecycle wiring exists.
 New spawns choose the backend in this order: explicit `fm-spawn.sh --backend <name>`, then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then default `tmux`.
 If both runtime markers are present, `$TMUX` wins because tmux is the innermost surface firstmate is running on.
