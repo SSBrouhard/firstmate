@@ -17,13 +17,16 @@
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
+# shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 # shellcheck source=bin/fm-classify-lib.sh
+# shellcheck disable=SC1091
 . "$ROOT/bin/fm-classify-lib.sh"
 
 WATCH="$ROOT/bin/fm-watch.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
 
+# shellcheck disable=SC2034 # Consumed by make_case helpers sourced above.
 TMP_ROOT=$(fm_test_tmproot fm-watch-triage-tests)
 
 # Common watcher knobs: tight poll/grace, no check or heartbeat cadence unless a
