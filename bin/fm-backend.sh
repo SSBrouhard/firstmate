@@ -41,7 +41,7 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # data/fm-backend-design-d7/herdr-addendum.md) - verified against the real
 # v0.7.1/protocol-14 binary (data/fm-backend-design-d7/herdr-verification-p2.md)
 # but newer than tmux's long-proven default path.
-FM_BACKEND_KNOWN="tmux herdr"
+FM_BACKEND_KNOWN="tmux herdr codex-app"
 
 # fm_backend_is_known: 0 iff <name> has a verified adapter.
 fm_backend_is_known() {  # <name>
@@ -182,6 +182,13 @@ fm_backend_source() {  # <name>
         _FM_BACKEND_HERDR_SOURCED=1
       fi
       ;;
+    codex-app)
+      if [ -z "${_FM_BACKEND_CODEX_APP_SOURCED:-}" ]; then
+        # shellcheck source=bin/backends/codex-app.sh
+        . "$FM_BACKEND_LIB_DIR/backends/codex-app.sh"
+        _FM_BACKEND_CODEX_APP_SOURCED=1
+      fi
+      ;;
   esac
 }
 
@@ -239,6 +246,7 @@ fm_backend_capture() {  # <backend> <target> <lines>
   case "$backend" in
     tmux) fm_backend_tmux_capture "$@" ;;
     herdr) fm_backend_herdr_capture "$@" ;;
+    codex-app) fm_backend_codex_app_capture "$@" ;;
     *) echo "error: no capture implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -251,13 +259,14 @@ fm_backend_send_key() {  # <backend> <target> <key>
   case "$backend" in
     tmux) fm_backend_tmux_send_key "$@" ;;
     herdr) fm_backend_herdr_send_key "$@" ;;
+    codex-app) fm_backend_codex_app_send_key "$@" ;;
     *) echo "error: no send-key implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
 
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the verdict
-# (empty|pending|unknown|send-failed for the tmux and herdr adapters).
+# (empty|pending|unknown|send-failed for current adapters).
 fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle>
   local backend=$1
   shift
@@ -265,6 +274,7 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   case "$backend" in
     tmux) fm_backend_tmux_send_text_submit "$@" ;;
     herdr) fm_backend_herdr_send_text_submit "$@" ;;
+    codex-app) fm_backend_codex_app_send_text_submit "$@" ;;
     *) echo "error: no send-text implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -279,6 +289,7 @@ fm_backend_kill() {  # <backend> <target>
   case "$backend" in
     tmux) fm_backend_tmux_kill "$@" ;;
     herdr) fm_backend_herdr_kill "$@" ;;
+    codex-app) fm_backend_codex_app_kill "$@" ;;
     *) echo "error: no kill implementation for backend '$backend'" >&2; return 1 ;;
   esac
 }
@@ -296,6 +307,7 @@ fm_backend_busy_state() {  # <backend> <target>
   fm_backend_source "$backend" || { printf 'unknown'; return 0; }
   case "$backend" in
     herdr) fm_backend_herdr_busy_state "$@" ;;
+    codex-app) fm_backend_codex_app_busy_state "$@" ;;
     *) printf 'unknown' ;;
   esac
 }
@@ -323,6 +335,10 @@ fm_backend_target_exists() {  # <backend> <target>
       pane=${target#*:}
       [ -n "$session" ] && [ -n "$pane" ] && [ "$pane" != "$target" ] || return 1
       HERDR_SESSION="$session" herdr pane get "$pane" >/dev/null 2>&1
+      ;;
+    codex-app)
+      fm_backend_source codex-app || return 1
+      fm_backend_codex_app_target_exists "$target"
       ;;
     *)
       return 1

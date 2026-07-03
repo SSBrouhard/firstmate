@@ -190,6 +190,7 @@ async function main() {
     writeMeta(taskId, {
       backend: "codex-app",
       window: threadName,
+      codex_app_thread_name: threadName,
       harness: "codex",
       codex_app_thread_state: "pending",
       codex_app_pending_action: "create_thread_or_fork_thread",
@@ -212,6 +213,7 @@ async function main() {
       throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
     }
     writeMeta(taskId, {
+      window: threadId,
       thread_id: threadId,
       turn_id: flags.turn_id,
       worktree: flags.worktree,
@@ -236,7 +238,8 @@ async function main() {
     const projectMode = resolveProjectMode(projectPath);
     writeMeta(taskId, {
       backend: "codex-app",
-      window: flags.thread_name || `fm-${taskId}`,
+      window: threadId,
+      codex_app_thread_name: flags.thread_name || `fm-${taskId}`,
       worktree: flags.worktree || "",
       project: projectPath,
       harness: flags.harness || "codex",

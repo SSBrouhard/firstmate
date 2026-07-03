@@ -20,6 +20,7 @@ EOF
 
 FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread "$ID" thread-1 --turn-id turn-1 --pending-worktree-id pending-1 >/dev/null
 grep -qx 'thread_id=thread-1' "$META"
+grep -qx 'window=thread-1' "$META"
 grep -qx 'turn_id=turn-1' "$META"
 grep -qx 'codex_app_pending_worktree_id=pending-1' "$META"
 grep -qx 'codex_app_thread_state=visible' "$META"
@@ -80,7 +81,8 @@ EOF
 FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-2 /tmp/example --kind scout --thread-name fm-adopted --worktree /tmp/wt >/dev/null
 ADOPTED_META="$TMP/state/adopted.meta"
 grep -qx 'backend=codex-app' "$ADOPTED_META"
-grep -qx 'window=fm-adopted' "$ADOPTED_META"
+grep -qx 'window=thread-2' "$ADOPTED_META"
+grep -qx 'codex_app_thread_name=fm-adopted' "$ADOPTED_META"
 grep -qx 'worktree=/tmp/wt' "$ADOPTED_META"
 grep -qx 'project=/tmp/example' "$ADOPTED_META"
 grep -qx 'harness=codex' "$ADOPTED_META"

@@ -200,10 +200,11 @@ test_backend_name_explicit_beats_detection() {
 
 test_backend_validate_refuses_unknown() {
   fm_backend_validate tmux 2>/dev/null || fail "fm_backend_validate should accept tmux"
+  fm_backend_validate codex-app 2>/dev/null || fail "fm_backend_validate should accept codex-app"
   local out
   out=$(fm_backend_validate zellij 2>&1) && fail "fm_backend_validate should refuse zellij (P1 has no such adapter)"
   assert_contains "$out" "unknown backend 'zellij'" "fm_backend_validate did not name the rejected backend"
-  pass "fm_backend_validate: tmux accepted, an unimplemented backend refused loudly"
+  pass "fm_backend_validate: tmux and codex-app accepted, an unimplemented backend refused loudly"
 }
 
 test_meta_get_and_backend_of_meta() {
@@ -217,6 +218,23 @@ test_meta_get_and_backend_of_meta() {
   [ "$(fm_backend_of_meta "$meta")" = tmux ] || fail "fm_backend_of_meta should read an explicit backend=tmux"
 
   pass "fm_meta_get / fm_backend_of_meta: read key=value, default backend to tmux"
+}
+
+test_codex_app_backend_cached_capture_and_liveness() {
+  local home=$TMP_ROOT/codex-app-backend-home meta out
+  mkdir -p "$home/state" "$home/data"
+  meta="$home/state/codex-task.meta"
+  fm_write_meta "$meta" "backend=codex-app" "window=thread-codex" "thread_id=thread-codex" "codex_app_thread_state=visible"
+  printf 'alpha\nbeta\ngamma\n' > "$home/state/codex-task.codex-app.capture"
+
+  out=$(FM_HOME="$home" fm_backend_capture codex-app thread-codex 2)
+  [ "$out" = "$(printf 'beta\ngamma')" ] || fail "codex-app backend should capture cached thread text"
+  FM_HOME="$home" fm_backend_target_exists codex-app thread-codex \
+    || fail "codex-app backend should report recorded thread ids as existing"
+  [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = unknown ] \
+    || fail "codex-app backend visible threads should report unknown busy state"
+
+  pass "codex-app backend: cached capture, liveness, and busy state dispatch"
 }
 
 test_resolve_selector_three_forms() {
@@ -652,6 +670,7 @@ test_backend_name_autodetect_notice
 test_backend_name_explicit_beats_detection
 test_backend_validate_refuses_unknown
 test_meta_get_and_backend_of_meta
+test_codex_app_backend_cached_capture_and_liveness
 test_resolve_selector_three_forms
 test_backend_of_selector_matches_explicit_target_meta
 test_send_conformance_old_vs_new
