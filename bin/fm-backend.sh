@@ -8,22 +8,24 @@
 # fm-peek.sh, fm-watch.sh, fm-spawn.sh, and fm-teardown.sh already ran inline
 # into bin/backends/tmux.sh, with those SAME command sequences, so the default
 # (tmux) path stays byte-identical. P2 adds bin/backends/herdr.sh, an
-# EXPERIMENTAL backend behind `--backend herdr`/`FM_BACKEND=herdr`/
+# EXPERIMENTAL spawn-capable backend behind `--backend herdr`/`FM_BACKEND=herdr`/
 # `config/backend`, and behind runtime auto-detection when firstmate itself is
 # running inside herdr with no explicit backend setting; see herdr-addendum.md and
 # data/fm-backend-design-d7/herdr-verification-p2.md for its empirical basis.
-# P3 adds bin/backends/zellij.sh, also EXPERIMENTAL, behind `--backend
-# zellij`/`FM_BACKEND=zellij`/`config/backend` - NOT behind runtime
+# P3 adds bin/backends/zellij.sh, also EXPERIMENTAL and spawn-capable, behind
+# `--backend zellij`/`FM_BACKEND=zellij`/`config/backend` - NOT behind runtime
 # auto-detection (report.md's Open Question #2: start with a dedicated
 # background session for predictability, unlike tmux's/herdr's ambient-session
 # reuse); see report.md's "Zellij Backend" section and docs/zellij-backend.md
-# for its empirical basis.
+# for its empirical basis. The Orca adapter is currently primitive-only for
+# already-created terminals, so fm-spawn.sh validates against FM_BACKEND_SPAWN
+# and refuses backend=orca until lifecycle wiring exists.
 #
 # Compatibility contract: a task's meta may omit `backend=`; every reader here
 # treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
 # `backend=tmux` for a default-backend task, so existing and newly spawned
 # default-path metas stay byte-identical. Only a task spawned on a non-tmux
-# backend, currently experimental herdr or zellij, carries an explicit
+# spawn-capable backend, currently experimental herdr or zellij, carries an explicit
 # `backend=` line.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
