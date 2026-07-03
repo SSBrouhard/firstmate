@@ -39,13 +39,14 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   The root `.tasks.toml` is tracked `tasks-axi` config for `data/backlog.md`; compatible `tasks-axi` is the default backend for routine backlog mutations.
   A local `config/backlog-backend=manual` opt-out forces hand-editing and stays gitignored.
   A local `config/backend` file explicitly overrides runtime auto-detection for new task endpoints and stays gitignored; accepted values are `tmux` and experimental `herdr`.
+  The proposed `codex-app` visible-thread backend is documented in `docs/codex-app-backend.md`, but is not a selectable backend value yet.
   It does not make `data/` tracked.
 - Helper scripts in `bin/` are plain bash.
   Each starts with a usage header comment; keep it accurate when you change behavior.
   Test scripts and helpers in `tests/` are plain bash too.
   `shellcheck bin/*.sh bin/backends/*.sh tests/*.sh` must pass, and CI enforces it.
 - Changes to harness adapters (detection in `bin/fm-harness.sh`, launch and hook mechanics in `bin/fm-spawn.sh`, busy signatures in `bin/fm-watch.sh` and `bin/fm-tmux-lib.sh`, cleanup in `bin/fm-teardown.sh`, and facts in `.agents/skills/harness-adapters/SKILL.md`) must be verified empirically against the real harness, never written from documentation alone.
-- Changes to runtime session backends (`bin/fm-backend.sh`, `bin/backends/`, and the scripts that dispatch through them) need empirical adapter notes in the relevant docs, following `docs/herdr-backend.md` for non-tmux backends.
+- Changes to runtime session backends (`bin/fm-backend.sh`, `bin/backends/`, and the scripts that dispatch through them) need empirical adapter notes in the relevant docs, following `docs/herdr-backend.md` for implemented non-tmux backends and `docs/codex-app-backend.md` for future Codex App visible-thread protocol work.
 - In Markdown, put each full sentence on its own line.
 
 ## Development
