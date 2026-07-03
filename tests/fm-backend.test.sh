@@ -27,10 +27,13 @@
 set -u
 
 # shellcheck source=tests/lib.sh
+# shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 fm_git_identity fmtest fmtest@example.invalid
 
 # shellcheck source=bin/fm-backend.sh
+# shellcheck disable=SC1091
+# shellcheck disable=SC2153
 . "$ROOT/bin/fm-backend.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-backend-tests)

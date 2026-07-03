@@ -193,6 +193,7 @@ fm_backend_source() {  # <name>
     tmux)
       if [ -z "${_FM_BACKEND_TMUX_SOURCED:-}" ]; then
         # shellcheck source=bin/backends/tmux.sh
+        # shellcheck disable=SC1091
         . "$FM_BACKEND_LIB_DIR/backends/tmux.sh"
         _FM_BACKEND_TMUX_SOURCED=1
       fi
@@ -200,6 +201,7 @@ fm_backend_source() {  # <name>
     herdr)
       if [ -z "${_FM_BACKEND_HERDR_SOURCED:-}" ]; then
         # shellcheck source=bin/backends/herdr.sh
+        # shellcheck disable=SC1091
         . "$FM_BACKEND_LIB_DIR/backends/herdr.sh"
         _FM_BACKEND_HERDR_SOURCED=1
       fi

@@ -4,10 +4,13 @@
 # ledger as a backend target and refuses operations that must happen in Desktop.
 
 fm_backend_codex_app_cmd() {
+  local data_override state_override
+  state_override="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+  data_override="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
   FM_ROOT="$FM_ROOT" \
   FM_HOME="$FM_HOME" \
-  FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-$FM_HOME/state}" \
-  FM_DATA_OVERRIDE="${FM_DATA_OVERRIDE:-$FM_HOME/data}" \
+  FM_STATE_OVERRIDE="$state_override" \
+  FM_DATA_OVERRIDE="$data_override" \
     "$FM_BACKEND_LIB_DIR/fm-codex-app" "$@"
 }
 

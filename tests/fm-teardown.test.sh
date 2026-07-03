@@ -37,6 +37,7 @@
 set -u
 
 # shellcheck source=tests/lib.sh
+# shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 fm_git_identity fmtest fmtest@example.invalid
 

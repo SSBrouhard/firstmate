@@ -43,8 +43,10 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-tmux-lib.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-tmux-lib.sh"
 # shellcheck source=bin/fm-backend.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
 
 ID=${1:-}
