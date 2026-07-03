@@ -28,6 +28,7 @@ FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread "$ID" thread-1 --turn-id t
 grep -qx 'thread_id=thread-1' "$META"
 grep -qx 'window=thread-1' "$META"
 grep -qx 'turn_id=turn-1' "$META"
+grep -qx 'codex_app_worktree_owner=external' "$META"
 grep -qx 'codex_app_pending_worktree_id=pending-1' "$META"
 grep -qx 'codex_app_thread_state=visible' "$META"
 grep -qx 'codex_app_transport=visible-thread' "$META"
@@ -143,10 +144,16 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-
   exit 1
 fi
 grep -q 'distinct from the project checkout' "$TMP/unsafe-project-record.err"
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-owner --kind scout --project "$PROJECT" --worktree "$WT" --worktree-owner treehouse 2>"$TMP/unsafe-owner-record.err"; then
+  echo "expected record-thread with unsupported worktree owner to fail" >&2
+  exit 1
+fi
+grep -q 'only supports --worktree-owner external' "$TMP/unsafe-owner-record.err"
 FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-safe --kind scout --project "$PROJECT" --worktree "$WT" >/dev/null
 grep -qx 'kind=scout' "$TMP/state/prepared-unsafe.meta"
 grep -qx "project=$PROJECT" "$TMP/state/prepared-unsafe.meta"
 grep -qx "worktree=$WT" "$TMP/state/prepared-unsafe.meta"
+grep -qx 'codex_app_worktree_owner=external' "$TMP/state/prepared-unsafe.meta"
 
 mkdir -p "$TMP/data"
 cat > "$TMP/data/projects.md" <<EOF
@@ -158,6 +165,7 @@ grep -qx 'backend=codex-app' "$ADOPTED_META"
 grep -qx 'window=thread-2' "$ADOPTED_META"
 grep -qx 'codex_app_thread_name=fm-adopted' "$ADOPTED_META"
 grep -qx "worktree=$WT" "$ADOPTED_META"
+grep -qx 'codex_app_worktree_owner=external' "$ADOPTED_META"
 grep -qx "project=$PROJECT" "$ADOPTED_META"
 grep -qx 'harness=codex' "$ADOPTED_META"
 grep -qx 'kind=scout' "$ADOPTED_META"
@@ -184,6 +192,12 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread project-worktree thread-
   exit 1
 fi
 grep -q 'distinct from the project checkout' "$TMP/project-worktree.err"
+
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread treehouse-owner thread-treehouse-owner "$PROJECT" --kind scout --worktree "$WT" --worktree-owner treehouse 2>"$TMP/treehouse-owner.err"; then
+  echo "expected adoption with unsupported worktree owner to fail" >&2
+  exit 1
+fi
+grep -q 'only supports --worktree-owner external' "$TMP/treehouse-owner.err"
 
 PLAIN_CLONE="$TMP/plain-clone"
 git clone -q "$PROJECT" "$PLAIN_CLONE"

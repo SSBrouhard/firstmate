@@ -14,23 +14,25 @@ It writes pending task metadata with `backend=codex-app`, `window=<thread-name>`
 After Codex Desktop has a real thread, record it with:
 
 ```sh
-bin/fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --project <path> --worktree <path> [--turn-id <id>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--pending-worktree-id <id>]
+bin/fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --project <path> --worktree <path> [--worktree-owner external] [--turn-id <id>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--pending-worktree-id <id>]
 ```
 
 That changes `window=` to the thread id, records `thread_id=`, sets `codex_app_thread_state=visible`, and clears the pending action.
 `record-pending` stores a pending worktree id when Desktop has created a worktree request but the final thread id is not known yet.
 `record-thread` requires protected task state: `kind=ship|scout`, an existing git project directory, and an existing registered linked worktree root must already be recorded in the prepared meta or supplied as flags.
 That prevents a prepared visible thread from becoming a default ship task that teardown cannot validate for landed work or scout report delivery.
+The ledger records `codex_app_worktree_owner=external`; this slice does not accept treehouse ownership for Codex App visible-thread worktrees because Desktop, not firstmate, owns the thread/worktree lifecycle.
 `prepare` refuses an existing task id unless the existing metadata is the same pending Codex App task, so it cannot overwrite a live route.
 
 To bring an already-visible Desktop thread under firstmate supervision, use:
 
 ```sh
-bin/fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
+bin/fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--worktree-owner external] [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
 ```
 
 Adoption refuses duplicate task ids and duplicate thread ids.
 `--worktree` must name an existing registered linked worktree root for the project, distinct from the project checkout, for both ship and scout tasks.
+Adoption records `codex_app_worktree_owner=external`; unsupported owner values are refused.
 When `--harness` is omitted, adoption records `harness=codex`.
 If `--mode` or `--yolo` is omitted, it resolves the project mode from `data/projects.md` and falls back to `no-mistakes`/`off`.
 
@@ -63,6 +65,8 @@ Archived threads report `status=archived`; the backend maps that to `idle`.
 Visible or pending threads report unknown busy state, so supervision does not claim a live Desktop thread is idle without an explicit archived marker.
 `fm-teardown.sh` refuses codex-app tasks until the thread is archived in Desktop and marked archived in the ledger.
 It also validates the recorded project and worktree before removal; `--force` does not bypass the Codex App archive marker or the project-checkout/registered-worktree safety checks.
+Codex App metadata without `codex_app_worktree_owner=external` fails closed at teardown.
+For external Codex App worktrees, teardown may clear firstmate's local ledger state after the normal archive/report/landed gates, but it deliberately skips branch deletion and `treehouse return --force`.
 
 `codex-app` is not selectable for new spawns through `--backend`, `FM_BACKEND`, or `config/backend` until a complete visible-thread spawn lifecycle exists.
 Use `prepare`, `record-thread`, or `adopt-thread` to create codex-app metadata for Desktop-owned visible threads.

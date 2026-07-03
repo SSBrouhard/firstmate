@@ -66,6 +66,7 @@ PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
 BACKEND=$(fm_backend_of_meta "$META")
 HOME_PATH=$(grep '^home=' "$META" | cut -d= -f2- || true)
 PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
+CODEX_APP_WORKTREE_OWNER=$(grep '^codex_app_worktree_owner=' "$META" | tail -1 | cut -d= -f2- || true)
 # tasktmp is recorded by fm-spawn for tasks that set up a per-task temp root
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
@@ -114,6 +115,10 @@ require_codex_app_teardown_state() {
   case "$KIND" in
     ship|scout)
       local proj_abs wt_abs
+      if [ "$CODEX_APP_WORKTREE_OWNER" != external ]; then
+        echo "REFUSED: Codex App $KIND task $ID must record codex_app_worktree_owner=external before teardown can safely avoid treehouse return." >&2
+        exit 1
+      fi
       if [ -z "$PROJ" ] || [ ! -d "$PROJ" ]; then
         echo "REFUSED: Codex App $KIND task $ID has no existing project directory recorded for teardown safety." >&2
         exit 1
@@ -138,6 +143,14 @@ require_codex_app_teardown_state() {
       fi
       ;;
   esac
+}
+
+should_return_worktree_to_treehouse() {
+  [ "$KIND" != secondmate ] || return 1
+  if [ "$BACKEND" = codex-app ] && [ "$CODEX_APP_WORKTREE_OWNER" = external ]; then
+    return 1
+  fi
+  return 0
 }
 
 remove_grok_turnend_auth() {
@@ -692,7 +705,9 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
-if [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
+# Codex App visible-thread worktrees are externally owned in this ledger slice,
+# so firstmate clears its local ledger but never treehouse-returns that checkout.
+if [ -d "$WT" ] && should_return_worktree_to_treehouse; then
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   if [ "$branch" != "HEAD" ]; then
     if git -C "$WT" checkout --detach -q 2>/dev/null; then

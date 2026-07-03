@@ -664,6 +664,7 @@ test_codex_app_teardown_refuses_visible_thread() {
     "window=thread-visible" \
     "thread_id=thread-visible" \
     "codex_app_thread_state=visible" \
+    "codex_app_worktree_owner=external" \
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=scout" \
@@ -692,6 +693,7 @@ test_codex_app_teardown_refuses_archived_missing_worktree() {
     "thread_id=thread-archived" \
     "codex_app_thread_state=archived" \
     "codex_app_archived=1" \
+    "codex_app_worktree_owner=external" \
     "worktree=" \
     "project=$case_dir/project" \
     "kind=ship" \
@@ -717,6 +719,7 @@ test_codex_app_teardown_refuses_project_checkout_worktree() {
     "thread_id=thread-archived" \
     "codex_app_thread_state=archived" \
     "codex_app_archived=1" \
+    "codex_app_worktree_owner=external" \
     "worktree=$case_dir/project" \
     "project=$case_dir/project" \
     "kind=scout" \
@@ -735,9 +738,9 @@ test_codex_app_teardown_refuses_project_checkout_worktree() {
   pass "Codex App teardown refuses project checkouts as disposable worktrees"
 }
 
-test_codex_app_teardown_allows_archived_scout_with_report() {
+test_codex_app_teardown_refuses_missing_worktree_owner() {
   local case_dir rc
-  case_dir=$(make_case codex-archived-scout)
+  case_dir=$(make_case codex-missing-owner)
   fm_write_meta "$case_dir/state/task-x1.meta" \
     "backend=codex-app" \
     "window=thread-archived" \
@@ -756,9 +759,44 @@ test_codex_app_teardown_allows_archived_scout_with_report() {
   rc=$?
   set -e
 
+  expect_code 1 "$rc" "codex-missing-owner: teardown should refuse Codex App meta without explicit worktree owner"
+  grep -q 'codex_app_worktree_owner=external' "$case_dir/stderr" || fail "codex-missing-owner: refusal did not cite missing external owner"
+  [ -f "$case_dir/state/task-x1.meta" ] || fail "codex-missing-owner: refused teardown removed meta"
+  pass "Codex App teardown fails closed when worktree ownership is missing"
+}
+
+test_codex_app_teardown_allows_archived_scout_with_report() {
+  local case_dir rc
+  case_dir=$(make_case codex-archived-scout)
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "backend=codex-app" \
+    "window=thread-archived" \
+    "thread_id=thread-archived" \
+    "codex_app_thread_state=archived" \
+    "codex_app_archived=1" \
+    "codex_app_worktree_owner=external" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=scout" \
+    "mode=no-mistakes"
+  mkdir -p "$case_dir/data/task-x1"
+  printf 'report\n' > "$case_dir/data/task-x1/report.md"
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+echo "treehouse should not be called for external Codex App worktrees" >&2
+exit 99
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  set +e
+  FM_DATA_OVERRIDE="$case_dir/data" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
   expect_code 0 "$rc" "codex-archived-scout: teardown should allow archived Codex App scout with report"
   [ ! -f "$case_dir/state/task-x1.meta" ] || fail "codex-archived-scout: successful teardown left meta behind"
   [ ! -f "$case_dir/state/task-x1.codex-app.capture" ] || fail "codex-archived-scout: successful teardown left capture cache behind"
+  [ -d "$case_dir/wt" ] || fail "codex-archived-scout: external worktree was removed"
   pass "Codex App teardown allows archived scout tasks only after the report gate"
 }
 
@@ -800,4 +838,5 @@ test_gh_error_and_content_absent_refuses
 test_codex_app_teardown_refuses_visible_thread
 test_codex_app_teardown_refuses_archived_missing_worktree
 test_codex_app_teardown_refuses_project_checkout_worktree
+test_codex_app_teardown_refuses_missing_worktree_owner
 test_codex_app_teardown_allows_archived_scout_with_report

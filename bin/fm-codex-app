@@ -31,8 +31,8 @@ const STATE = process.env.FM_STATE_OVERRIDE || path.join(HOME, "state");
 function usage() {
   console.error(`usage:
   fm-codex-app prepare <task-id> <thread-name> <brief-file>
-  fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --project <path> --worktree <path> [--turn-id <id>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--pending-worktree-id <id>]
-  fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
+  fm-codex-app record-thread <task-id> <thread-id> --kind <ship|scout> --project <path> --worktree <path> [--worktree-owner external] [--turn-id <id>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--pending-worktree-id <id>]
+  fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--worktree-owner external] [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
   fm-codex-app record-pending <task-id> <pending-worktree-id>
   fm-codex-app record-capture <task-id> <capture-file|->
   fm-codex-app mark-archived <task-id>
@@ -87,9 +87,12 @@ function ensureCodexAppMeta(taskId, action) {
   return meta;
 }
 
-function validateProtectedTaskState(kind, projectPath, worktreePath, action) {
+function validateProtectedTaskState(kind, projectPath, worktreePath, owner, action) {
   if (kind !== "ship" && kind !== "scout") {
     throw new Error(`${action} requires --kind ship or --kind scout`);
+  }
+  if (owner !== "external") {
+    throw new Error(`${action} only supports --worktree-owner external in this ledger slice`);
   }
   if (!projectPath) throw new Error(`${action} requires project metadata for ${kind} tasks`);
   if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
@@ -100,6 +103,7 @@ function validateProtectedTaskState(kind, projectPath, worktreePath, action) {
     throw new Error(`${action} requires --worktree to name an existing directory: ${worktreePath}`);
   }
   validateDisposableWorktree(projectPath, worktreePath, action);
+  return owner;
 }
 
 function realDir(dir) {
@@ -299,7 +303,13 @@ async function main() {
     const kind = flags.kind || meta.kind;
     const projectPath = flags.project || meta.project;
     const worktreePath = flags.worktree || meta.worktree;
-    validateProtectedTaskState(kind, projectPath, worktreePath, "record-thread");
+    const worktreeOwner = validateProtectedTaskState(
+      kind,
+      projectPath,
+      worktreePath,
+      flags.worktree_owner || meta.codex_app_worktree_owner || "external",
+      "record-thread",
+    );
     const existing = taskForThread(threadId);
     if (existing && existing.taskId !== taskId) {
       throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
@@ -310,6 +320,7 @@ async function main() {
       turn_id: flags.turn_id,
       project: projectPath,
       worktree: worktreePath,
+      codex_app_worktree_owner: worktreeOwner,
       harness: flags.harness || meta.harness || "codex",
       kind,
       mode: flags.mode || meta.mode,
@@ -331,13 +342,20 @@ async function main() {
     const existing = taskForThread(threadId);
     if (existing) throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
     const kind = flags.kind;
-    validateProtectedTaskState(kind, projectPath, flags.worktree, "adopt-thread");
+    const worktreeOwner = validateProtectedTaskState(
+      kind,
+      projectPath,
+      flags.worktree,
+      flags.worktree_owner || "external",
+      "adopt-thread",
+    );
     const projectMode = resolveProjectMode(projectPath);
     writeMeta(taskId, {
       backend: "codex-app",
       window: threadId,
       codex_app_thread_name: flags.thread_name || `fm-${taskId}`,
       worktree: flags.worktree,
+      codex_app_worktree_owner: worktreeOwner,
       project: projectPath,
       harness: flags.harness || "codex",
       kind,
