@@ -110,6 +110,18 @@ test_send_key_refuses_unknown_key() {
   pass "fm_backend_orca_send_key: refuses unsupported keys loudly"
 }
 
+test_send_key_refuses_escape_until_supported() {
+  local out status
+  orca_case send-key-escape
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_key term-123 Escape' "$ROOT" 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "send_key should refuse Escape until Orca exposes a real Escape primitive"
+  assert_contains "$out" "unsupported Orca key 'Escape'" "send_key did not name Escape as unsupported"
+  [ ! -s "$LOG" ] || fail "unsupported Escape should not call orca terminal send"
+  pass "fm_backend_orca_send_key: refuses Escape instead of mapping it to interrupt"
+}
+
 test_kill_is_best_effort_close() {
   orca_case kill
   printf '1\n' > "$RESP/1.exit"
@@ -137,5 +149,6 @@ test_send_text_submit_constructs_enter_send
 test_send_text_submit_reports_send_failed
 test_send_key_enter_and_interrupt
 test_send_key_refuses_unknown_key
+test_send_key_refuses_escape_until_supported
 test_kill_is_best_effort_close
 test_dispatcher_sources_orca_and_routes_primitives

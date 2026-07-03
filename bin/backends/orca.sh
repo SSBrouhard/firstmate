@@ -34,7 +34,7 @@ fm_backend_orca_send_key() {  # <terminal-id> <key>
   local terminal=$1 key=$2
   fm_backend_orca_tool_check || return 1
   case "$key" in
-    Escape|escape|Esc|esc|C-c|ctrl+c|Ctrl-c|Ctrl-C)
+    C-c|ctrl+c|Ctrl-c|Ctrl-C)
       orca terminal send --terminal "$terminal" --interrupt --json >/dev/null
       ;;
     Enter|enter)
