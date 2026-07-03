@@ -220,6 +220,35 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   pass "fm-spawn.sh --backend orca: creates Orca worktree/terminal, records metadata, launches harness"
 }
 
+test_spawn_refuses_orca_nonisolated_worktree() {
+  local proj data state config id out status
+  id="orcabadwtz4"
+  proj="$TMP_ROOT/bad-spawn-project"
+  data="$TMP_ROOT/bad-spawn-data"
+  state="$TMP_ROOT/bad-spawn-state"
+  config="$TMP_ROOT/bad-spawn-config"
+  fm_git_init_commit "$proj"
+  mkdir -p "$data/$id" "$state" "$config"
+  printf 'brief\n' > "$data/$id/brief.md"
+  touch "$state/.last-watcher-beat"
+  orca_case bad-spawn
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-bad"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-bad","path":"%s"}}}\n' "$proj" > "$RESP/3.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
+  status=$?
+  expect_code 1 "$status" "fm-spawn.sh --backend orca should refuse a primary checkout worktree"
+  assert_contains "$out" "orca worktree create did not yield an isolated worktree" \
+    "Orca spawn should reuse the isolated-worktree guard"
+  assert_absent "$state/$id.meta" "aborted Orca spawn must not record meta"
+  assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create' \
+    "Orca spawn should validate the worktree before creating a terminal"
+  pass "fm-spawn.sh --backend orca: refuses non-isolated worktrees before terminal creation"
+}
+
 test_peek_send_and_crew_state_route_through_orca_meta() {
   local wt state id out neutral
   id="orcaiopathz2"
@@ -245,6 +274,8 @@ test_peek_send_and_crew_state_route_through_orca_meta() {
   assert_contains "$out" "state: unknown" "crew-state should fall back cleanly for an idle Orca scout"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''read'$'\x1f''--terminal'$'\x1f''term-io' \
     "peek/crew-state did not read the recorded Orca terminal"
+  assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''read'$'\x1f''--terminal'$'\x1f'"fm-$id" \
+    "crew-state should not read the stable Orca alias as a terminal handle"
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''send'$'\x1f''--terminal'$'\x1f''term-io'$'\x1f''--text'$'\x1f''hello orca'$'\x1f''--enter'$'\x1f''--json' \
     "send did not route through the recorded Orca terminal"
   pass "fm-peek/fm-send/fm-crew-state route through backend=orca metadata"
@@ -305,5 +336,6 @@ test_kill_is_best_effort_close
 test_dispatcher_sources_orca_and_routes_primitives
 test_worktree_and_terminal_helpers_parse_json
 test_spawn_writes_orca_metadata_and_launches_harness
+test_spawn_refuses_orca_nonisolated_worktree
 test_peek_send_and_crew_state_route_through_orca_meta
 test_scout_teardown_removes_orca_worktree_via_helper
