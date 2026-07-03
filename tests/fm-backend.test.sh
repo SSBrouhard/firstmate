@@ -244,8 +244,8 @@ test_codex_app_backend_cached_capture_and_liveness() {
     || fail "codex-app backend should report recorded thread ids as existing"
   FM_HOME="$home" fm_backend_target_exists codex-app thread-uncached \
     || fail "codex-app backend should report uncached recorded thread ids as existing"
-  [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = unknown ] \
-    || fail "codex-app backend visible threads should report unknown busy state"
+  [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = busy ] \
+    || fail "codex-app backend visible threads should report busy state"
   (
     local routed_state routed_data routed_home routed_out
     routed_home="$TMP_ROOT/codex-app-routed-home"
@@ -267,6 +267,8 @@ test_codex_app_backend_cached_capture_and_liveness() {
   assert_contains "$(cat "$home/kill-visible.err")" "still marked visible" \
     "codex-app backend kill refusal should explain that the ledger must be archived first"
   printf 'codex_app_thread_state=archived\ncodex_app_archived=1\n' >> "$meta"
+  [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = idle ] \
+    || fail "codex-app backend archived threads should report idle state"
   FM_HOME="$home" fm_backend_kill codex-app thread-codex \
     || fail "codex-app backend kill should accept already-archived ledger threads"
 

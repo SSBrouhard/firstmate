@@ -410,6 +410,39 @@ test_nonterminal_stale_not_working_surfaced() {
   pass "a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)"
 }
 
+test_codex_app_visible_thread_skips_stale_wake() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case codex-app-visible-stale); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$state/codex-visible.codex-app.capture"
+  window="thread-visible"
+  printf 'cached transcript\n' > "$capture_file"
+  fm_write_meta "$state/codex-visible.meta" \
+    "backend=codex-app" \
+    "window=$window" \
+    "thread_id=$window" \
+    "kind=ship" \
+    "codex_app_thread_state=visible"
+  printf 'working: Desktop owns this visible thread\n' > "$state/codex-visible.status"
+  sig=$(seen_sig "$state/codex-visible.status"); printf '%s' "$sig" > "$state/.seen-codex-visible_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "cached transcript")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher surfaced a stale wake for a visible codex-app thread: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "visible codex-app thread printed a wake reason"
+  [ ! -s "$state/.wake-queue" ] || fail "visible codex-app thread enqueued a wake"
+  [ ! -e "$state/.stale-$key" ] || fail "visible codex-app thread advanced stale suppressor"
+  reap "$pid"
+  pass "visible codex-app threads do not trip stale-pane wakes"
+}
+
 test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
   local dir state fakebin out capture_file window key pane_hash sig pid since
   dir=$(make_case nonterminal-stale-timer-repair); state="$dir/state"; fakebin="$dir/fakebin"
@@ -597,6 +630,7 @@ test_actionable_signal_surfaced
 test_terminal_stale_surfaced
 test_nonterminal_stale_provably_working_absorbed_then_escalated
 test_nonterminal_stale_not_working_surfaced
+test_codex_app_visible_thread_skips_stale_wake
 test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_heartbeat_no_change_absorbed

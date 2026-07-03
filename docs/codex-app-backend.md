@@ -62,7 +62,7 @@ bin/fm-codex-app mark-archived <task-id>
 ```
 
 Archived threads report `status=archived`; the backend maps that to `idle`.
-Visible or pending threads report unknown busy state, so supervision does not claim a live Desktop thread is idle without an explicit archived marker.
+Visible or pending threads report busy state, so stale-pane supervision stays out of app-owned Desktop threads until an explicit archived marker exists.
 `fm-teardown.sh` refuses codex-app tasks until the thread is archived in Desktop and marked archived in the ledger.
 It also validates the recorded project and worktree before removal; `--force` does not bypass the Codex App archive marker or the project-checkout/registered-worktree safety checks.
 Codex App metadata without `codex_app_worktree_owner=external` fails closed at teardown.

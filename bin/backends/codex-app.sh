@@ -53,7 +53,8 @@ fm_backend_codex_app_busy_state() {  # <thread-id>
   status=$(fm_backend_codex_app_cmd status "$1" 2>/dev/null | sed -n 's/^status=//p' | tail -1) || { printf 'unknown'; return 0; }
   case "$status" in
     archived) printf 'idle' ;;
-    *) printf 'unknown' ;;
+    visible|pending|pending-worktree) printf 'busy' ;;
+    *) printf 'busy' ;;
   esac
 }
 
