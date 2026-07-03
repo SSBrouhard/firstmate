@@ -210,6 +210,23 @@ test_worktree_and_terminal_helpers_parse_json() {
   pass "Orca lifecycle helpers: register repo, create worktree, create terminal, parse stable ids"
 }
 
+test_worktree_create_removes_worktree_when_path_missing() {
+  local out status
+  orca_case lifecycle-missing-path
+  printf '1\n' > "$RESP/1.exit"
+  printf '{"ok":true,"result":{"repo":{"id":"repo-no-path"}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"worktree":{"id":"wt-no-path"}}}\n' > "$RESP/3.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_worktree_create /repo/path fm-task' "$ROOT" 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "worktree helper should fail when Orca omits the worktree path"
+  assert_contains "$out" "orca worktree create did not return a path for fm-task" \
+    "worktree helper did not explain the missing path"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-no-path'$'\x1f''--force'$'\x1f''--json' \
+    "worktree helper did not remove the pathless Orca worktree"
+  pass "fm_backend_orca_worktree_create: removes created worktree when path is missing"
+}
+
 test_spawn_writes_orca_metadata_and_launches_harness() {
   local proj wt data state config id out log
   id="orcaspawnz1"
@@ -636,6 +653,7 @@ test_kill_is_best_effort_close
 test_remove_worktree_refuses_empty_id
 test_dispatcher_sources_orca_and_routes_primitives
 test_worktree_and_terminal_helpers_parse_json
+test_worktree_create_removes_worktree_when_path_missing
 test_spawn_writes_orca_metadata_and_launches_harness
 test_spawn_refuses_orca_nonisolated_worktree
 test_spawn_removes_orca_worktree_when_terminal_create_fails

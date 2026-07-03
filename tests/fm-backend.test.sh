@@ -273,12 +273,17 @@ test_backend_of_selector_matches_explicit_target_meta() {
   mkdir -p "$state"
   fm_write_meta "$state/herdr-task.meta" "window=default:w1:p2" "backend=herdr"
   fm_write_meta "$state/tmux-task.meta" "window=firstmate:fm-tmux-task"
+  fm_write_meta "$state/custom-window-task.meta" "window=custom-window"
   fm_write_meta "$state/orca-task.meta" "window=fm-orca-task" "terminal=term-orca-task" "backend=orca"
 
   [ "$(fm_backend_of_selector 'fm-herdr-task' 'default:w1:p2' "$state")" = herdr ] \
     || fail "bare fm-<id> selector should use its recorded backend"
   [ "$(fm_backend_resolve_selector 'fm-orca-task' "$state")" = term-orca-task ] \
     || fail "Orca fm-<id> selector should resolve to terminal=, not window="
+  [ "$(fm_backend_resolve_selector 'term-orca-task' "$state")" = term-orca-task ] \
+    || fail "raw Orca terminal selector should resolve through metadata"
+  [ "$(fm_backend_resolve_selector 'custom-window' "$state")" = custom-window ] \
+    || fail "raw window selector matching metadata should not require tmux fallback"
   [ "$(fm_backend_of_selector 'term-orca-task' 'term-orca-task' "$state")" = orca ] \
     || fail "matching an explicit Orca terminal handle should inherit metadata backend"
   [ "$(fm_backend_of_selector 'default:w1:p2' 'default:w1:p2' "$state")" = herdr ] \

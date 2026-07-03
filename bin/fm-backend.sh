@@ -175,7 +175,7 @@ fm_backend_meta_for_window() {  # <target> <state-dir>
     [ -e "$meta" ] || continue
     window=$(fm_meta_get "$meta" window)
     terminal=$(fm_meta_get "$meta" terminal)
-    [ "$window" = "$target" ] || [ "$terminal" = "$target" ] || continue
+    { [ -n "$window" ] && [ "$window" = "$target" ]; } || { [ -n "$terminal" ] && [ "$terminal" = "$target" ]; } || continue
     printf '%s' "$meta"
     return 0
   done
@@ -253,11 +253,9 @@ fm_backend_source() {  # <name>
 #                      against a live backend inventory (matches today's
 #                      behavior: tmux window names can be trusted from meta
 #                      without a live re-check).
-#   anything else      an ad hoc bare window name with no meta, resolved by
-#                      searching the legacy tmux live inventory. This remains
-#                      the compatibility fallback; herdr tasks should be
-#                      targeted by fm-<id> metadata or an explicit recorded
-#                      target.
+#   anything else      first matched against recorded `window=`/`terminal=`
+#                      metadata, then treated as an ad hoc bare window name and
+#                      resolved by searching the legacy tmux live inventory.
 fm_backend_resolve_selector() {  # <raw-target> <state-dir>
   local raw=$1 state=$2 meta window
   case "$raw" in
@@ -277,6 +275,13 @@ fm_backend_resolve_selector() {  # <raw-target> <state-dir>
       return 0
       ;;
     *)
+      meta=$(fm_backend_meta_for_window "$raw" "$state" 2>/dev/null || true)
+      if [ -n "$meta" ]; then
+        window=$(fm_backend_target_of_meta "$meta")
+        [ -n "$window" ] || { echo "error: no backend target recorded in $meta" >&2; return 1; }
+        printf '%s' "$window"
+        return 0
+      fi
       fm_backend_source tmux || return 1
       fm_backend_tmux_resolve_bare_selector "$raw"
       ;;

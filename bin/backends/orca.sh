@@ -61,6 +61,7 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
   }
   wt_path=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-path) || {
     echo "error: orca worktree create did not return a path for $name" >&2
+    fm_backend_orca_remove_worktree "$wt_id" >/dev/null || true
     return 1
   }
   printf '%s\t%s' "$wt_id" "$wt_path"
