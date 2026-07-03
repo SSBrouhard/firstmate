@@ -71,7 +71,7 @@ PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 # tasktmp is recorded by fm-spawn for tasks that set up a per-task temp root
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
-ORCA_WORKTREE_ID=$(grep '^orca_worktree_id=' "$META" | cut -d= -f2- || true)
+ORCA_WORKTREE_ID=$(fm_meta_get "$META" orca_worktree_id)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -96,8 +96,33 @@ default_branch() {
 
 meta_value() {
   local meta=$1 key=$2
-  grep "^$key=" "$meta" | cut -d= -f2- || true
+  fm_meta_get "$meta" "$key"
 }
+
+require_orca_worktree_id() {
+  local meta=$1 id
+  id=$(meta_value "$meta" orca_worktree_id)
+  if [ -z "$id" ]; then
+    echo "error: missing orca_worktree_id in $meta; cannot remove Orca worktree" >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
+require_orca_terminal() {
+  local meta=$1 terminal
+  terminal=$(meta_value "$meta" terminal)
+  if [ -z "$terminal" ]; then
+    echo "error: missing terminal in $meta; cannot close Orca terminal" >&2
+    return 1
+  fi
+  printf '%s\n' "$terminal"
+}
+
+if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
+  T=$(require_orca_terminal "$META") || exit 1
+  ORCA_WORKTREE_ID=$(require_orca_worktree_id "$META") || exit 1
+fi
 
 remove_grok_turnend_auth() {
   local state_dir=$1 id=$2 token hooks_dir
@@ -496,7 +521,7 @@ remove_firstmate_home() {
 }
 
 validate_firstmate_home_children_removal() {
-  local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home
+  local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -505,11 +530,19 @@ validate_firstmate_home_children_removal() {
     child_wt=$(meta_value "$child_meta" worktree)
     child_kind=$(meta_value "$child_meta" kind)
     [ -n "$child_kind" ] || child_kind=ship
+    child_backend=$(fm_backend_of_meta "$child_meta")
     if [ "$child_kind" = secondmate ]; then
       child_home=$(meta_value "$child_meta" home)
       [ -n "$child_home" ] || child_home=$child_wt
       validate_firstmate_home_for_removal "$child_home" "child firstmate home" "$child_id" >/dev/null || return 1
       validate_firstmate_home_children_removal "$child_home" || return 1
+    elif [ "$child_backend" = orca ]; then
+      require_orca_terminal "$child_meta" >/dev/null || return 1
+      require_orca_worktree_id "$child_meta" >/dev/null || return 1
+      if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
+        child_proj=$(meta_value "$child_meta" project)
+        validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+      fi
     elif [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
       child_proj=$(meta_value "$child_meta" project)
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
@@ -518,19 +551,24 @@ validate_firstmate_home_children_removal() {
 }
 
 cleanup_firstmate_home_children() {
-  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home
+  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
     [ -e "$child_meta" ] || continue
     child_id=$(basename "$child_meta" .meta)
-    child_t=$(meta_value "$child_meta" window)
     child_wt=$(meta_value "$child_meta" worktree)
     child_proj=$(meta_value "$child_meta" project)
     child_kind=$(meta_value "$child_meta" kind)
     [ -n "$child_kind" ] || child_kind=ship
+    child_backend=$(fm_backend_of_meta "$child_meta")
+    if [ "$child_backend" = orca ]; then
+      child_t=$(require_orca_terminal "$child_meta") || return 1
+    else
+      child_t=$(fm_backend_target_of_meta "$child_meta")
+    fi
     if [ -n "$child_t" ]; then
-      fm_backend_kill "$(fm_backend_of_meta "$child_meta")" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" 2>/dev/null || true
+      fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" 2>/dev/null || true
     fi
     if [ "$child_kind" = secondmate ]; then
       child_home=$(meta_value "$child_meta" home)
@@ -539,6 +577,13 @@ cleanup_firstmate_home_children() {
         cleanup_firstmate_home_children "$child_home"
         remove_firstmate_home "$child_home" "child firstmate home" "$child_id"
       fi
+    elif [ "$child_backend" = orca ]; then
+      child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
+      if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
+        validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+        rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" "$child_wt/.fm-grok-turnend"
+      fi
+      fm_backend_remove_worktree "$child_backend" "$child_orca_worktree_id" || return 1
     elif [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
       rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" "$child_wt/.fm-grok-turnend"
@@ -659,7 +704,7 @@ if [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js" "$WT/.fm-grok-turnend"
   if [ "$BACKEND" = orca ]; then
     fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
-    fm_backend_orca_remove_worktree "$ORCA_WORKTREE_ID"
+    fm_backend_remove_worktree "$BACKEND" "$ORCA_WORKTREE_ID"
   else
     # Kills remaining processes in the worktree (including the agent), resets, returns
     # to pool. treehouse resolves the pool from the working directory, so run it from

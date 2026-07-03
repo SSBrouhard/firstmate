@@ -55,6 +55,22 @@ SH
   printf '%s\n' "$root"
 }
 
+add_tmux_fake() {
+  local fb=$1
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+LOG="${FM_ORCA_LOG:?}"
+{
+  printf 'tmux'
+  for a in "$@"; do printf '\x1f%s' "$a"; done
+  printf '\n'
+} >> "$LOG"
+exit 0
+SH
+  chmod +x "$fb/tmux"
+}
+
 test_capture_reads_terminal_tail_json() {
   local out
   orca_case capture-tail
@@ -153,6 +169,18 @@ test_kill_is_best_effort_close() {
   assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-123'$'\x1f''--json' \
     "kill did not call orca terminal close"
   pass "fm_backend_orca_kill: calls terminal close and stays best-effort"
+}
+
+test_remove_worktree_refuses_empty_id() {
+  local out status
+  orca_case remove-empty
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_remove_worktree ""' "$ROOT" 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "remove_worktree should fail when the Orca worktree id is empty"
+  assert_contains "$out" "missing Orca worktree id" "remove_worktree did not explain the missing id"
+  [ ! -s "$LOG" ] || fail "remove_worktree should not call Orca with an empty id"
+  pass "fm_backend_orca_remove_worktree: refuses empty worktree ids"
 }
 
 test_worktree_and_terminal_helpers_parse_json() {
@@ -314,6 +342,75 @@ test_scout_teardown_removes_orca_worktree_via_helper() {
   pass "fm-teardown.sh backend=orca: scout report gate then helper-backed worktree removal"
 }
 
+test_teardown_refuses_orca_missing_worktree_id() {
+  local proj wt data state config id out rc neutral
+  id="orcamissingidz5"
+  proj="$TMP_ROOT/missing-id-project"
+  wt="$TMP_ROOT/missing-id-wt"
+  data="$TMP_ROOT/missing-id-data"
+  state="$TMP_ROOT/missing-id-state"
+  config="$TMP_ROOT/missing-id-config"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  mkdir -p "$data/$id" "$state" "$config"
+  printf 'report\n' > "$data/$id/report.md"
+  touch "$state/.last-watcher-beat"
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" "terminal=term-missing-id" "worktree=$wt" "project=$proj" \
+    "harness=claude" "kind=scout" "mode=no-mistakes" "yolo=off" "backend=orca"
+  orca_case missing-id
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "Orca teardown should refuse missing orca_worktree_id"
+  assert_contains "$out" "missing orca_worktree_id" "teardown did not explain the missing Orca worktree id"
+  assert_present "$state/$id.meta" "failed teardown must preserve task metadata"
+  [ ! -s "$LOG" ] || fail "teardown should fail before closing terminals or removing worktrees without an Orca worktree id"
+  pass "fm-teardown.sh backend=orca: refuses missing worktree ids before cleanup"
+}
+
+test_secondmate_force_teardown_removes_orca_child_via_orca() {
+  local home subhome childproj childwt child_id neutral out rc
+  home="$TMP_ROOT/orca-child-parent"
+  subhome="$TMP_ROOT/orca-child-secondmate"
+  childproj="$subhome/projects/alpha"
+  childwt="$TMP_ROOT/orca-child-worktree"
+  child_id="orcachildz6"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$subhome/projects"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_git_worktree "$childproj" "$childwt" "fm/$child_id"
+  fm_write_meta "$home/state/domain.meta" \
+    "window=firstmate:fm-domain" "worktree=$subhome" "project=$subhome" \
+    "harness=echo" "kind=secondmate" "mode=secondmate" "yolo=off" \
+    "home=$subhome" "projects=alpha"
+  printf '%s\n' "- domain - Orca child cleanup (home: $subhome; scope: orca cleanup; projects: alpha; added 2026-07-03)" \
+    > "$home/data/secondmates.md"
+  fm_write_meta "$subhome/state/$child_id.meta" \
+    "window=fm-$child_id" "terminal=term-child-cleanup" "worktree=$childwt" "project=$childproj" \
+    "harness=claude" "kind=ship" "mode=no-mistakes" "yolo=off" \
+    "backend=orca" "orca_worktree_id=wt-child-cleanup"
+  orca_case secondmate-child-cleanup
+  add_tmux_fake "$FB"
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_HOME="$home" "$ROOT/bin/fm-teardown.sh" domain --force 2>&1 )
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "forced secondmate teardown should remove Orca child work through Orca"$'\n'"$out"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-child-cleanup'$'\x1f''--json' \
+    "child cleanup did not close the recorded Orca terminal"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-child-cleanup'$'\x1f''--force'$'\x1f''--json' \
+    "child cleanup did not remove the Orca worktree through orca worktree rm"
+  assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f'"fm-$child_id" \
+    "child cleanup closed the stable alias instead of the Orca terminal"
+  assert_absent "$home/state/domain.meta" "parent metadata should be removed after forced teardown"
+  pass "fm-teardown.sh --force: removes Orca secondmate children through Orca"
+}
+
 test_dispatcher_sources_orca_and_routes_primitives() {
   local out
   orca_case dispatch
@@ -333,9 +430,12 @@ test_send_key_enter_and_interrupt
 test_send_key_refuses_unknown_key
 test_send_key_refuses_escape_until_supported
 test_kill_is_best_effort_close
+test_remove_worktree_refuses_empty_id
 test_dispatcher_sources_orca_and_routes_primitives
 test_worktree_and_terminal_helpers_parse_json
 test_spawn_writes_orca_metadata_and_launches_harness
 test_spawn_refuses_orca_nonisolated_worktree
 test_peek_send_and_crew_state_route_through_orca_meta
 test_scout_teardown_removes_orca_worktree_via_helper
+test_teardown_refuses_orca_missing_worktree_id
+test_secondmate_force_teardown_removes_orca_child_via_orca

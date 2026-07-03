@@ -90,8 +90,8 @@ fm_backend_orca_send_literal() {  # <terminal-id> <text>
 }
 
 fm_backend_orca_remove_worktree() {  # <worktree-id>
-  local worktree_id=$1
-  [ -n "$worktree_id" ] || return 0
+  local worktree_id=${1:-}
+  [ -n "$worktree_id" ] || { echo "error: missing Orca worktree id; cannot remove worktree" >&2; return 1; }
   fm_backend_orca_tool_check || return 1
   orca worktree rm --worktree "id:$worktree_id" --force --json >/dev/null
 }
