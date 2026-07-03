@@ -243,8 +243,16 @@ test_codex_app_backend_cached_capture_and_liveness() {
     || fail "codex-app backend should report uncached recorded thread ids as existing"
   [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = unknown ] \
     || fail "codex-app backend visible threads should report unknown busy state"
+  if FM_HOME="$home" fm_backend_kill codex-app thread-codex 2>"$home/kill-visible.err"; then
+    fail "codex-app backend kill should refuse visible, app-owned threads"
+  fi
+  assert_contains "$(cat "$home/kill-visible.err")" "still marked visible" \
+    "codex-app backend kill refusal should explain that the ledger must be archived first"
+  printf 'codex_app_thread_state=archived\ncodex_app_archived=1\n' >> "$meta"
+  FM_HOME="$home" fm_backend_kill codex-app thread-codex \
+    || fail "codex-app backend kill should accept already-archived ledger threads"
 
-  pass "codex-app backend: cached capture, liveness, and busy state dispatch"
+  pass "codex-app backend: cached capture, liveness, busy state, and archive-gated kill"
 }
 
 test_resolve_selector_three_forms() {
@@ -573,6 +581,27 @@ test_teardown_conformance_old_vs_new() {
   pass "fm-teardown.sh: treehouse return + tmux kill-window command log is byte-identical old vs new for a scout task"
 }
 
+test_teardown_refuses_unarchived_codex_app() {
+  local id state data config out status
+  id="codexteardownz1"
+  state="$TMP_ROOT/codex-teardown-state"; data="$TMP_ROOT/codex-teardown-data"; config="$TMP_ROOT/codex-teardown-config"
+  mkdir -p "$state" "$data" "$config"
+  fm_write_meta "$state/$id.meta" \
+    "backend=codex-app" "window=thread-codex-teardown" "thread_id=thread-codex-teardown" \
+    "project=$TMP_ROOT/codex-teardown-project" "harness=codex" "kind=ship" "mode=no-mistakes" "yolo=off" \
+    "codex_app_thread_state=visible"
+
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "fm-teardown.sh should refuse codex-app tasks that are not marked archived"
+  [ -f "$state/$id.meta" ] || fail "fm-teardown.sh must leave codex-app meta in place when refusing teardown"
+  assert_contains "$out" "not marked archived" \
+    "codex-app teardown refusal did not explain the ledger archive requirement"
+
+  pass "fm-teardown.sh: codex-app tasks must be marked archived before teardown"
+}
+
 # --- backend selection loudly refuses an unknown backend --------------------
 
 test_spawn_refuses_unknown_backend_flag() {
@@ -717,6 +746,7 @@ test_send_conformance_old_vs_new
 test_peek_conformance_old_vs_new
 test_spawn_conformance_old_vs_new
 test_teardown_conformance_old_vs_new
+test_teardown_refuses_unarchived_codex_app
 test_spawn_refuses_unknown_backend_flag
 test_spawn_refuses_unknown_fm_backend_env
 test_spawn_refuses_codex_app_selection

@@ -102,12 +102,13 @@ mkdir -p "$TMP/data"
 cat > "$TMP/data/projects.md" <<EOF
 - example [direct-PR +yolo] - Example project (added 2026-06-21)
 EOF
-FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-2 /tmp/example --kind scout --thread-name fm-adopted --worktree /tmp/wt >/dev/null
+mkdir -p "$TMP/wt"
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-2 /tmp/example --kind scout --thread-name fm-adopted --worktree "$TMP/wt" >/dev/null
 ADOPTED_META="$TMP/state/adopted.meta"
 grep -qx 'backend=codex-app' "$ADOPTED_META"
 grep -qx 'window=thread-2' "$ADOPTED_META"
 grep -qx 'codex_app_thread_name=fm-adopted' "$ADOPTED_META"
-grep -qx 'worktree=/tmp/wt' "$ADOPTED_META"
+grep -qx "worktree=$TMP/wt" "$ADOPTED_META"
 grep -qx 'project=/tmp/example' "$ADOPTED_META"
 grep -qx 'harness=codex' "$ADOPTED_META"
 grep -qx 'kind=scout' "$ADOPTED_META"
@@ -116,6 +117,18 @@ grep -qx 'yolo=on' "$ADOPTED_META"
 grep -qx 'thread_id=thread-2' "$ADOPTED_META"
 grep -qx 'codex_app_thread_state=visible' "$ADOPTED_META"
 grep -qx 'codex_app_pending_action=none' "$ADOPTED_META"
+
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread no-worktree thread-no-worktree /tmp/example --kind scout 2>"$TMP/no-worktree.err"; then
+  echo "expected adoption without worktree to fail" >&2
+  exit 1
+fi
+grep -q 'requires --worktree' "$TMP/no-worktree.err"
+
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread missing-worktree thread-missing-worktree /tmp/example --kind scout --worktree "$TMP/missing-wt" 2>"$TMP/missing-worktree.err"; then
+  echo "expected adoption with missing worktree to fail" >&2
+  exit 1
+fi
+grep -q 'existing directory' "$TMP/missing-worktree.err"
 
 if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-3 /tmp/example --kind scout 2>"$TMP/duplicate-task.err"; then
   echo "expected duplicate task adoption to fail" >&2

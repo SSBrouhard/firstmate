@@ -29,7 +29,16 @@ fm_backend_codex_app_send_text_submit() {  # <thread-id> <text> <retries> <enter
 }
 
 fm_backend_codex_app_kill() {  # <thread-id>
-  fm_backend_codex_app_cmd archive "$1" >&2 || true
+  local status
+  status=$(fm_backend_codex_app_cmd status "$1" 2>/dev/null | sed -n 's/^status=//p' | tail -1) || {
+    echo "error: Codex App thread $1 is not archived in the firstmate ledger. Archive it in Codex Desktop, then run mark-archived." >&2
+    return 2
+  }
+  if [ "$status" = archived ]; then
+    return 0
+  fi
+  echo "error: Codex App thread $1 is app-owned and still marked $status. Archive it in Codex Desktop, then run mark-archived." >&2
+  return 2
 }
 
 fm_backend_codex_app_busy_state() {  # <thread-id>

@@ -94,6 +94,19 @@ meta_value() {
   grep "^$key=" "$meta" | cut -d= -f2- || true
 }
 
+require_codex_app_archived_for_teardown() {
+  local archived state
+  [ "$BACKEND" = codex-app ] || return 0
+  archived=$(meta_value "$META" codex_app_archived)
+  state=$(meta_value "$META" codex_app_thread_state)
+  if [ "$archived" = 1 ] && [ "$state" = archived ]; then
+    return 0
+  fi
+  echo "REFUSED: Codex App task $ID is still app-owned and not marked archived in the ledger." >&2
+  echo "Archive thread $T in Codex Desktop, then run bin/fm-codex-app mark-archived $ID before teardown." >&2
+  exit 1
+}
+
 remove_grok_turnend_auth() {
   local state_dir=$1 id=$2 token hooks_dir
   token=$(cat "$state_dir/$id.grok-turnend-token" 2>/dev/null || true)
@@ -563,6 +576,8 @@ if [ "$KIND" = secondmate ]; then
     validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
   fi
 fi
+
+require_codex_app_archived_for_teardown
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
   SUB_STATE="$HOME_PATH/state"

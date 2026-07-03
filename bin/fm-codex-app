@@ -244,12 +244,16 @@ async function main() {
     if (existing) throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
     const kind = flags.kind;
     if (kind !== "ship" && kind !== "scout") throw new Error("adopt-thread requires --kind ship or --kind scout");
+    if (!flags.worktree) throw new Error("adopt-thread requires --worktree for ship and scout tasks");
+    if (!fs.existsSync(flags.worktree) || !fs.statSync(flags.worktree).isDirectory()) {
+      throw new Error(`adopt-thread requires --worktree to name an existing directory: ${flags.worktree}`);
+    }
     const projectMode = resolveProjectMode(projectPath);
     writeMeta(taskId, {
       backend: "codex-app",
       window: threadId,
       codex_app_thread_name: flags.thread_name || `fm-${taskId}`,
-      worktree: flags.worktree || "",
+      worktree: flags.worktree,
       project: projectPath,
       harness: flags.harness || "codex",
       kind,
