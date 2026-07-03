@@ -1,0 +1,337 @@
+#!/usr/bin/env node
+// Firstmate Codex App visible-thread ledger.
+// Visible Codex App threads are owned by the Codex Desktop host. This helper
+// records local task state and refuses to masquerade as the host thread API.
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+function looksLikeFleetRoot(dir) {
+  return fs.existsSync(path.join(dir, "state"))
+    && fs.existsSync(path.join(dir, "data"))
+    && fs.existsSync(path.join(dir, "bin", "fm-codex-app"));
+}
+
+function findRootFromCwd() {
+  let dir = process.cwd();
+  while (true) {
+    if (looksLikeFleetRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+const ROOT = process.env.FM_ROOT || findRootFromCwd() || path.resolve(__dirname, "..");
+const HOME = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || ROOT;
+const DATA = process.env.FM_DATA_OVERRIDE || path.join(HOME, "data");
+const STATE = process.env.FM_STATE_OVERRIDE || path.join(HOME, "state");
+
+function usage() {
+  console.error(`usage:
+  fm-codex-app prepare <task-id> <thread-name> <brief-file>
+  fm-codex-app record-thread <task-id> <thread-id> [--turn-id <id>] [--worktree <path>] [--pending-worktree-id <id>]
+  fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> [--thread-name <name>] [--mode <mode>] [--yolo <on|off>] [--worktree <path>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
+  fm-codex-app record-pending <task-id> <pending-worktree-id>
+  fm-codex-app record-capture <task-id> <capture-file|->
+  fm-codex-app mark-archived <task-id>
+  fm-codex-app capture <thread-id> [lines]
+  fm-codex-app send <thread-id> <text>
+  fm-codex-app interrupt <thread-id>
+  fm-codex-app archive <thread-id>
+  fm-codex-app status <thread-id>`);
+  process.exit(2);
+}
+
+function ensureState() {
+  fs.mkdirSync(STATE, { recursive: true });
+}
+
+function metaPath(taskId) {
+  return path.join(STATE, `${taskId}.meta`);
+}
+
+function parseMeta(content) {
+  const values = {};
+  for (const line of content.split(/\r?\n/)) {
+    if (!line || line.startsWith("#")) continue;
+    const idx = line.indexOf("=");
+    if (idx === -1) continue;
+    values[line.slice(0, idx)] = line.slice(idx + 1);
+  }
+  return values;
+}
+
+function readMeta(taskId) {
+  const file = metaPath(taskId);
+  try {
+    return parseMeta(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`no meta for task ${taskId} at ${file}`);
+    throw error;
+  }
+}
+
+function ensureMetaExists(taskId, action) {
+  if (!fs.existsSync(metaPath(taskId))) {
+    throw new Error(`${action} requires existing meta for task ${taskId}; run prepare or adopt-thread first`);
+  }
+}
+
+function writeMeta(taskId, values) {
+  ensureState();
+  const file = metaPath(taskId);
+  let current = {};
+  try {
+    current = parseMeta(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const next = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined && value !== null));
+  const merged = { ...current, ...next };
+  const body = Object.entries(merged)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  fs.writeFileSync(file, `${body}\n`);
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveProjectMode(projectPath) {
+  const projectName = path.basename(String(projectPath || "").replace(/\/+$/, ""));
+  const fallback = { mode: "no-mistakes", yolo: "off" };
+  if (!projectName) return fallback;
+
+  const registry = path.join(DATA, "projects.md");
+  let content;
+  try {
+    content = fs.readFileSync(registry, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return fallback;
+  }
+
+  const linePattern = new RegExp(`^-\\s+${escapeRegex(projectName)}(?:\\s+\\[([^\\]]+)\\])?\\s+-\\s+`);
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(linePattern);
+    if (!match) continue;
+    const tokens = String(match[1] || "").trim().split(/\s+/).filter(Boolean);
+    let mode = "no-mistakes";
+    let yolo = "off";
+    if (tokens[0] && tokens[0] !== "+yolo") mode = tokens[0];
+    if (tokens.includes("+yolo")) yolo = "on";
+    if (!["no-mistakes", "direct-PR", "local-only"].includes(mode)) return fallback;
+    return { mode, yolo };
+  }
+  return fallback;
+}
+
+function taskForThread(threadId) {
+  let matches = [];
+  try {
+    matches = fs.readdirSync(STATE).filter((name) => name.endsWith(".meta"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  for (const name of matches) {
+    const taskId = name.slice(0, -5);
+    const meta = readMeta(taskId);
+    if (meta.thread_id === threadId) return { taskId, meta };
+  }
+  return null;
+}
+
+function parseFlags(args) {
+  const flags = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const key = args[i];
+    if (!key.startsWith("--")) throw new Error(`unexpected argument '${key}'`);
+    const value = args[i + 1];
+    if (!value || value.startsWith("--")) throw new Error(`missing value for ${key}`);
+    flags[key.slice(2).replace(/-/g, "_")] = value;
+    i += 1;
+  }
+  return flags;
+}
+
+function lastLines(text, limit) {
+  const lines = String(text || "").replace(/\r?\n$/, "").split(/\r?\n/);
+  return lines.slice(Math.max(0, lines.length - limit)).join("\n");
+}
+
+function hostToolMessage(action, threadId, taskId) {
+  const suffix = taskId ? ` for task ${taskId}` : "";
+  switch (action) {
+    case "capture":
+      return `Codex App thread ${threadId}${suffix} is app-owned. Use read_thread in Codex Desktop, then optionally cache the text with: bin/fm-codex-app record-capture ${taskId || "<task-id>"} <file|->`;
+    case "send":
+      return `Codex App thread ${threadId}${suffix} is app-owned. Use send_message_to_thread(threadId=${threadId}, prompt=...) in Codex Desktop.`;
+    case "interrupt":
+      return `Codex App thread ${threadId}${suffix} is app-owned. Interrupt it from Codex Desktop, or use handoff_thread when moving a running thread.`;
+    case "archive":
+      return `Codex App thread ${threadId}${suffix} is app-owned. Use set_thread_archived(threadId=${threadId}, archived=true), then run: bin/fm-codex-app mark-archived ${taskId || "<task-id>"}`;
+    default:
+      return `Codex App thread ${threadId}${suffix} is app-owned. Use the Codex Desktop thread tools.`;
+  }
+}
+
+async function main() {
+  const [cmd, ...args] = process.argv.slice(2);
+  if (!cmd) usage();
+
+  if (cmd === "prepare") {
+    const [taskId, threadName, briefFile] = args;
+    if (!taskId || !threadName || !briefFile) usage();
+    if (!fs.existsSync(briefFile)) throw new Error(`brief not found: ${briefFile}`);
+    writeMeta(taskId, {
+      backend: "codex-app",
+      window: threadName,
+      harness: "codex",
+      codex_app_thread_state: "pending",
+      codex_app_pending_action: "create_thread_or_fork_thread",
+      codex_app_brief: briefFile,
+      codex_app_transport: "visible-thread",
+    });
+    console.log(`prepared_thread_name=${threadName}`);
+    console.log(`brief=${briefFile}`);
+    console.log("next=create_thread_or_fork_thread");
+    return;
+  }
+
+  if (cmd === "record-thread") {
+    const [taskId, threadId, ...rest] = args;
+    if (!taskId || !threadId) usage();
+    ensureMetaExists(taskId, "record-thread");
+    const flags = parseFlags(rest);
+    const existing = taskForThread(threadId);
+    if (existing && existing.taskId !== taskId) {
+      throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
+    }
+    writeMeta(taskId, {
+      thread_id: threadId,
+      turn_id: flags.turn_id,
+      worktree: flags.worktree,
+      codex_app_pending_worktree_id: flags.pending_worktree_id,
+      codex_app_thread_state: "visible",
+      codex_app_pending_action: "none",
+      codex_app_transport: "visible-thread",
+    });
+    console.log(`recorded_thread_id=${threadId}`);
+    return;
+  }
+
+  if (cmd === "adopt-thread") {
+    const [taskId, threadId, projectPath, ...rest] = args;
+    if (!taskId || !threadId || !projectPath) usage();
+    const flags = parseFlags(rest);
+    if (fs.existsSync(metaPath(taskId))) throw new Error(`task ${taskId} already has meta at ${metaPath(taskId)}`);
+    const existing = taskForThread(threadId);
+    if (existing) throw new Error(`thread ${threadId} is already recorded for task ${existing.taskId}`);
+    const kind = flags.kind;
+    if (kind !== "ship" && kind !== "scout") throw new Error("adopt-thread requires --kind ship or --kind scout");
+    const projectMode = resolveProjectMode(projectPath);
+    writeMeta(taskId, {
+      backend: "codex-app",
+      window: flags.thread_name || `fm-${taskId}`,
+      worktree: flags.worktree || "",
+      project: projectPath,
+      harness: flags.harness || "codex",
+      kind,
+      mode: flags.mode || projectMode.mode,
+      yolo: flags.yolo || projectMode.yolo,
+      thread_id: threadId,
+      turn_id: flags.turn_id,
+      codex_app_pending_worktree_id: flags.pending_worktree_id,
+      codex_app_thread_state: "visible",
+      codex_app_pending_action: "none",
+      codex_app_transport: "visible-thread",
+      codex_app_brief: flags.brief,
+    });
+    console.log(`adopted_thread_id=${threadId}`);
+    return;
+  }
+
+  if (cmd === "record-pending") {
+    const [taskId, pendingWorktreeId] = args;
+    if (!taskId || !pendingWorktreeId) usage();
+    ensureMetaExists(taskId, "record-pending");
+    writeMeta(taskId, {
+      codex_app_pending_worktree_id: pendingWorktreeId,
+      codex_app_thread_state: "pending-worktree",
+      codex_app_pending_action: "await_thread_id",
+      codex_app_transport: "visible-thread",
+    });
+    console.log(`recorded_pending_worktree_id=${pendingWorktreeId}`);
+    return;
+  }
+
+  if (cmd === "record-capture") {
+    const [taskId, captureFile] = args;
+    if (!taskId || !captureFile) usage();
+    ensureMetaExists(taskId, "record-capture");
+    const text = captureFile === "-" ? fs.readFileSync(0, "utf8") : fs.readFileSync(captureFile, "utf8");
+    ensureState();
+    fs.writeFileSync(path.join(STATE, `${taskId}.codex-app.capture`), text);
+    writeMeta(taskId, { codex_app_last_capture: new Date().toISOString() });
+    console.log(`recorded_capture_task=${taskId}`);
+    return;
+  }
+
+  if (cmd === "mark-archived") {
+    const [taskId] = args;
+    if (!taskId) usage();
+    ensureMetaExists(taskId, "mark-archived");
+    writeMeta(taskId, {
+      codex_app_archived: "1",
+      codex_app_thread_state: "archived",
+      codex_app_pending_action: "none",
+    });
+    console.log(`marked_archived_task=${taskId}`);
+    return;
+  }
+
+  if (cmd === "capture") {
+    const [threadId, linesArg] = args;
+    if (!threadId) usage();
+    const found = taskForThread(threadId);
+    const limit = Number(linesArg || 40);
+    if (found) {
+      const file = path.join(STATE, `${found.taskId}.codex-app.capture`);
+      if (fs.existsSync(file)) {
+        console.log(lastLines(fs.readFileSync(file, "utf8"), Number.isFinite(limit) && limit > 0 ? limit : 40));
+        return;
+      }
+    }
+    console.error(`error: ${hostToolMessage("capture", threadId, found?.taskId)}`);
+    process.exit(2);
+  }
+
+  if (cmd === "status") {
+    const [threadId] = args;
+    if (!threadId) usage();
+    const found = taskForThread(threadId);
+    if (!found) throw new Error(`thread ${threadId} is not recorded in ${STATE}`);
+    console.log(`status=${found.meta.codex_app_thread_state || "visible"}`);
+    if (found.meta.turn_id) console.log(`turn_id=${found.meta.turn_id}`);
+    return;
+  }
+
+  if (cmd === "send" || cmd === "interrupt" || cmd === "archive") {
+    const [threadId] = args;
+    if (!threadId) usage();
+    const found = taskForThread(threadId);
+    console.error(`error: ${hostToolMessage(cmd, threadId, found?.taskId)}`);
+    process.exit(2);
+  }
+
+  usage();
+}
+
+main().catch((error) => {
+  console.error(`error: ${error.message}`);
+  process.exit(1);
+});
