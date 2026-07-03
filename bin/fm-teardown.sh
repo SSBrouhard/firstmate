@@ -351,6 +351,34 @@ inspectable_git_worktree() {
   git -C "$top" rev-parse --git-dir >/dev/null 2>&1
 }
 
+canonical_existing_dir() {
+  local target=$1
+  [ -n "$target" ] || return 1
+  [ -d "$target" ] || return 1
+  ( cd "$target" && pwd -P )
+}
+
+require_orca_worktree_path_match() {
+  local worktree_id=$1 inspected=$2 resolved inspected_abs resolved_abs
+  resolved=$(fm_backend_worktree_path orca "$worktree_id") || {
+    echo "REFUSED: cannot resolve Orca worktree id $worktree_id to a path; preserving metadata." >&2
+    return 1
+  }
+  inspected_abs=$(canonical_existing_dir "$inspected") || {
+    echo "REFUSED: cannot canonicalize inspected worktree ${inspected:-<missing>}; preserving metadata." >&2
+    return 1
+  }
+  resolved_abs=$(canonical_existing_dir "$resolved") || {
+    echo "REFUSED: Orca worktree id $worktree_id resolved to uninspectable path ${resolved:-<missing>}; preserving metadata." >&2
+    return 1
+  }
+  if [ "$resolved_abs" != "$inspected_abs" ]; then
+    echo "REFUSED: Orca worktree id $worktree_id resolves to $resolved_abs, not inspected worktree $inspected_abs." >&2
+    echo "Cannot verify dirty or unlanded work for the worktree Orca would remove; preserving metadata." >&2
+    return 1
+  fi
+}
+
 firstmate_home_has_treehouse_slot() {
   local home=$1
   worktree_registered_for_project "$FM_ROOT" "$home"
@@ -655,6 +683,7 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] &&
     echo "Cannot verify dirty or unlanded work; restore the worktree path or get explicit OK to discard, then --force." >&2
     exit 1
   fi
+  require_orca_worktree_path_match "$ORCA_WORKTREE_ID" "$WT" || exit 1
 fi
 
 if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
