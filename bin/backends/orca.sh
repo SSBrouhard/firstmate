@@ -44,6 +44,32 @@ process.stdout.write(String(v));
 ' "$field"
 }
 
+fm_backend_orca_json_ok() {
+  node -e '
+const fs = require("fs");
+const input = fs.readFileSync(0, "utf8").trim();
+if (!input) process.exit(0);
+let data;
+try {
+  data = JSON.parse(input);
+} catch (err) {
+  console.error("invalid Orca JSON: " + err.message);
+  process.exit(2);
+}
+if (data.ok === false) {
+  const msg = data.error && (data.error.message || data.error.code);
+  if (msg) console.error(msg);
+  process.exit(2);
+}
+'
+}
+
+fm_backend_orca_run_json() {
+  local out
+  out=$("$@") || return 1
+  printf '%s' "$out" | fm_backend_orca_json_ok
+}
+
 fm_backend_orca_repo_ensure() {  # <project-path>
   local project=$1 out repo_id
   fm_backend_orca_tool_check || return 1
@@ -100,20 +126,20 @@ fm_backend_orca_terminal_create() {  # <worktree-id> <title>
 fm_backend_orca_send_text_line() {  # <terminal-id> <text>
   local terminal=$1 text=$2
   fm_backend_orca_tool_check || return 1
-  orca terminal send --terminal "$terminal" --text "$text" --enter --json >/dev/null
+  fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "$text" --enter --json
 }
 
 fm_backend_orca_send_literal() {  # <terminal-id> <text>
   local terminal=$1 text=$2
   fm_backend_orca_tool_check || return 1
-  orca terminal send --terminal "$terminal" --text "$text" --json >/dev/null
+  fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "$text" --json
 }
 
 fm_backend_orca_remove_worktree() {  # <worktree-id>
   local worktree_id=${1:-}
   [ -n "$worktree_id" ] || { echo "error: missing Orca worktree id; cannot remove worktree" >&2; return 1; }
   fm_backend_orca_tool_check || return 1
-  orca worktree rm --worktree "id:$worktree_id" --force --json >/dev/null
+  fm_backend_orca_run_json orca worktree rm --worktree "id:$worktree_id" --force --json
 }
 
 fm_backend_orca_worktree_path() {
@@ -156,10 +182,10 @@ fm_backend_orca_send_key() {  # <terminal-id> <key>
   fm_backend_orca_tool_check || return 1
   case "$key" in
     C-c|ctrl+c|Ctrl-c|Ctrl-C)
-      orca terminal send --terminal "$terminal" --interrupt --json >/dev/null
+      fm_backend_orca_run_json orca terminal send --terminal "$terminal" --interrupt --json
       ;;
     Enter|enter)
-      orca terminal send --terminal "$terminal" --text "" --enter --json >/dev/null
+      fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "" --enter --json
       ;;
     *)
       echo "error: unsupported Orca key '$key'" >&2
@@ -171,7 +197,7 @@ fm_backend_orca_send_key() {  # <terminal-id> <key>
 fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sleep> <settle>
   local terminal=$1 text=$2
   fm_backend_orca_tool_check || { printf 'send-failed'; return 0; }
-  if orca terminal send --terminal "$terminal" --text "$text" --enter --json >/dev/null; then
+  if fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "$text" --enter --json; then
     printf 'empty'
   else
     printf 'send-failed'

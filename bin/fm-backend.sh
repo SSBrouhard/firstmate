@@ -422,7 +422,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       ;;
     orca)
       fm_backend_source orca || return 1
-      orca terminal read --terminal "$target" --limit 1 --json >/dev/null 2>&1
+      fm_backend_orca_capture "$target" 1 >/dev/null 2>&1
       ;;
     *)
       return 1

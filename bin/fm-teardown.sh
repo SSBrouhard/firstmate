@@ -72,6 +72,7 @@ PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
 ORCA_WORKTREE_ID=$(fm_meta_get "$META" orca_worktree_id)
+ORCA_PATH_MATCH_VERIFIED=0
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -379,6 +380,12 @@ require_orca_worktree_path_match() {
   fi
 }
 
+require_orca_worktree_path_match_if_present() {
+  local worktree_id=$1 inspected=$2
+  [ -n "$inspected" ] && [ -e "$inspected" ] || return 0
+  require_orca_worktree_path_match "$worktree_id" "$inspected"
+}
+
 firstmate_home_has_treehouse_slot() {
   local home=$1
   worktree_registered_for_project "$FM_ROOT" "$home"
@@ -560,7 +567,7 @@ remove_firstmate_home() {
 }
 
 validate_firstmate_home_children_removal() {
-  local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend
+  local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend child_orca_worktree_id
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -576,12 +583,13 @@ validate_firstmate_home_children_removal() {
       validate_firstmate_home_for_removal "$child_home" "child firstmate home" "$child_id" >/dev/null || return 1
       validate_firstmate_home_children_removal "$child_home" || return 1
     elif [ "$child_backend" = orca ]; then
-      require_orca_worktree_id "$child_meta" >/dev/null || return 1
-      if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
+      child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
+      if [ -n "$child_wt" ] && [ -e "$child_wt" ]; then
         child_proj=$(meta_value "$child_meta" project)
         validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+        require_orca_worktree_path_match "$child_orca_worktree_id" "$child_wt" || return 1
       fi
-    elif [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
+    elif [ -n "$child_wt" ] && [ -e "$child_wt" ]; then
       child_proj=$(meta_value "$child_meta" project)
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
     fi
@@ -605,6 +613,12 @@ cleanup_firstmate_home_children() {
     else
       child_t=$(fm_backend_target_of_meta "$child_meta")
     fi
+    if [ "$child_backend" = orca ] && [ "$child_kind" != secondmate ]; then
+      child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
+      if [ -n "$child_wt" ] && [ -e "$child_wt" ]; then
+        validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+      fi
+    fi
     if [ -n "$child_t" ]; then
       fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" 2>/dev/null || true
     fi
@@ -616,7 +630,6 @@ cleanup_firstmate_home_children() {
         remove_firstmate_home "$child_home" "child firstmate home" "$child_id"
       fi
     elif [ "$child_backend" = orca ]; then
-      child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
       if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
         validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
         rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" "$child_wt/.fm-grok-turnend"
@@ -684,6 +697,7 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] &&
     exit 1
   fi
   require_orca_worktree_path_match "$ORCA_WORKTREE_ID" "$WT" || exit 1
+  ORCA_PATH_MATCH_VERIFIED=1
 fi
 
 if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
@@ -744,6 +758,10 @@ fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
+  if [ "$ORCA_PATH_MATCH_VERIFIED" != 1 ]; then
+    require_orca_worktree_path_match_if_present "$ORCA_WORKTREE_ID" "$WT" || exit 1
+    ORCA_PATH_MATCH_VERIFIED=1
+  fi
   if [ -d "$WT" ]; then
     branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
     if [ "$branch" != "HEAD" ]; then
