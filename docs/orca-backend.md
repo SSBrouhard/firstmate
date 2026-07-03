@@ -28,13 +28,15 @@ An Orca-spawned task must write these metadata fields before the harness launch 
 
 ```text
 backend=orca
+window=<generic firstmate target alias for the Orca terminal>
 terminal=<orca terminal id or selector>
 orca_worktree_id=<orca worktree id>
 worktree=<absolute path to the Orca-created git worktree>
 ```
 
-`window=` may continue to exist as the generic firstmate target string if call sites still expect it.
-For Orca, the stable operational endpoint is `terminal=`.
+`window=` is required until selector resolution, watcher routing, and teardown are explicitly migrated away from the generic firstmate target alias.
+Current core call sites still resolve `fm-<id>` through metadata `window=`, watch the recorded `window=`, and kill the recorded `window=` during teardown.
+For Orca, `terminal=` is the Orca-native stable operational endpoint, while `window=` is the compatibility alias those shared firstmate paths consume.
 Readers should treat `backend=orca` as the authoritative signal that Orca adapter operations, not tmux fallback lookups, own capture, sends, interrupt, and teardown.
 
 ## Adapter operations
@@ -92,7 +94,7 @@ A future Orca implementation PR should include fake-CLI unit coverage and a real
 At minimum, the smoke contract should prove:
 
 - bootstrap reports `orca` as required only when Orca is selected;
-- spawn writes `backend=orca`, `terminal=`, `orca_worktree_id=`, and `worktree=` before submitting the harness launch;
+- spawn writes `backend=orca`, required `window=`, `terminal=`, `orca_worktree_id=`, and `worktree=` before submitting the harness launch;
 - `fm-peek.sh` or the shared capture path reads bounded terminal output;
 - `fm-send.sh` can send text, submit Enter, and interrupt through the backend adapter;
 - teardown refuses dirty or unlanded work before any Orca terminal/worktree removal;
