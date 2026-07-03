@@ -120,8 +120,9 @@ require_orca_terminal() {
 }
 
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
-  T=$(require_orca_terminal "$META") || exit 1
   ORCA_WORKTREE_ID=$(require_orca_worktree_id "$META") || exit 1
+  T_ORCA=$(meta_value "$META" terminal)
+  [ -z "$T_ORCA" ] || T=$T_ORCA
 fi
 
 remove_grok_turnend_auth() {
@@ -703,7 +704,7 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
     fi
     rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js" "$WT/.fm-grok-turnend"
   fi
-  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  [ -z "$T_ORCA" ] || fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
   fm_backend_remove_worktree "$BACKEND" "$ORCA_WORKTREE_ID"
 elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)

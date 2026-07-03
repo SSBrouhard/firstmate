@@ -152,6 +152,42 @@ else
 fi
 fm_backend_validate_spawn "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
+ORCA_ABORT_CLEANUP=0
+ORCA_WORKTREE_ID=
+ORCA_TERMINAL=
+
+orca_spawn_abort_cleanup() {
+  local status=$?
+  [ "$ORCA_ABORT_CLEANUP" = 1 ] || return "$status"
+  ORCA_ABORT_CLEANUP=0
+  if [ -n "${ORCA_TERMINAL:-}" ]; then
+    fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null || true
+  fi
+  if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
+    if ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
+      mkdir -p "$STATE" 2>/dev/null || true
+      if [ -d "$STATE" ]; then
+        {
+          echo "window=$W"
+          echo "worktree=${WT:-}"
+          echo "project=$PROJ_ABS"
+          echo "harness=$HARNESS"
+          echo "kind=$KIND"
+          echo "mode=${MODE:-no-mistakes}"
+          echo "yolo=${YOLO:-off}"
+          echo "tasktmp=${TASK_TMP:-}"
+          echo "model=${MODEL:-default}"
+          echo "effort=${EFFORT:-default}"
+          echo "backend=orca"
+          echo "orca_worktree_id=$ORCA_WORKTREE_ID"
+          [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
+        } > "$STATE/$ID.meta" 2>/dev/null || true
+      fi
+    fi
+  fi
+  return "$status"
+}
+trap orca_spawn_abort_cleanup EXIT
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
 # positional as one and spawn each by re-execing this script in single-task mode. We use
@@ -649,6 +685,7 @@ EOF
     ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W") || exit 1
     ORCA_WORKTREE_ID=${ORCA_WT_RAW%%$'\t'*}
     WT=${ORCA_WT_RAW#*$'\t'}
+    ORCA_ABORT_CLEANUP=1
     if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
       echo "error: orca did not return a worktree id/path for $W" >&2
       exit 1
@@ -873,6 +910,7 @@ META_WINDOW=$T
     echo "projects=$SECONDMATE_PROJECTS"
   fi
 } > "$STATE/$ID.meta"
+[ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
