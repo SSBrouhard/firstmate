@@ -551,25 +551,26 @@ test_teardown_conformance_old_vs_new() {
 
 test_spawn_refuses_unknown_backend_flag() {
   local out status
-  # orca is a still-unimplemented backend from the design report (P4); zellij
-  # graduated to a real adapter in P3 and has its own spawn tests.
+  # bogus names a backend with no adapter at all; zellij and orca both
+  # graduated to real (albeit orca primitive-only) adapters and have their
+  # own spawn tests.
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" nope-backend-z1 projects/none claude --backend orca 2>&1)
+    "$ROOT/bin/fm-spawn.sh" nope-backend-z1 projects/none claude --backend bogus 2>&1)
   status=$?
-  [ "$status" -ne 0 ] || fail "fm-spawn --backend orca should refuse (not yet implemented)"
-  assert_contains "$out" "unknown backend 'orca'" "fm-spawn did not name the rejected backend"
-  pass "fm-spawn.sh --backend orca is refused loudly (not yet implemented)"
+  [ "$status" -ne 0 ] || fail "fm-spawn --backend bogus should refuse"
+  assert_contains "$out" "unknown backend 'bogus'" "fm-spawn did not name the rejected backend"
+  pass "fm-spawn.sh --backend bogus is refused loudly"
 }
 
 test_spawn_refuses_unknown_fm_backend_env() {
   local out status
   out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
-    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=orca \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=bogus \
     "$ROOT/bin/fm-spawn.sh" nope-backend-z2 projects/none claude 2>&1)
   status=$?
-  [ "$status" -ne 0 ] || fail "FM_BACKEND=orca should refuse (P1 is tmux-only)"
-  assert_contains "$out" "unknown backend 'orca'" "fm-spawn did not name the rejected FM_BACKEND"
+  [ "$status" -ne 0 ] || fail "FM_BACKEND=bogus should refuse"
+  assert_contains "$out" "unknown backend 'bogus'" "fm-spawn did not name the rejected FM_BACKEND"
   pass "fm-spawn.sh honors FM_BACKEND and refuses an unimplemented value loudly"
 }
 
