@@ -342,6 +342,38 @@ test_scout_teardown_removes_orca_worktree_via_helper() {
   pass "fm-teardown.sh backend=orca: scout report gate then helper-backed worktree removal"
 }
 
+test_teardown_removes_orca_worktree_when_path_missing() {
+  local proj wt data state config id out rc neutral
+  id="orcamissingpathz7"
+  proj="$TMP_ROOT/missing-path-project"
+  wt="$TMP_ROOT/missing-path-wt"
+  data="$TMP_ROOT/missing-path-data"
+  state="$TMP_ROOT/missing-path-state"
+  config="$TMP_ROOT/missing-path-config"
+  mkdir -p "$data/$id" "$state" "$config"
+  printf 'report\n' > "$data/$id/report.md"
+  touch "$state/.last-watcher-beat"
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" "terminal=term-missing-path" "worktree=$wt" "project=$proj" \
+    "harness=claude" "kind=scout" "mode=no-mistakes" "yolo=off" \
+    "backend=orca" "orca_worktree_id=wt-missing-path"
+  orca_case missing-path
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "Orca teardown should release helpers even when the path is absent"$'\n'"$out"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-missing-path'$'\x1f''--json' \
+    "teardown did not close the recorded Orca terminal when the path was absent"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-missing-path'$'\x1f''--force'$'\x1f''--json' \
+    "teardown did not remove the recorded Orca worktree when the path was absent"
+  assert_absent "$state/$id.meta" "successful helper cleanup should remove task metadata"
+  pass "fm-teardown.sh backend=orca: releases terminal/worktree when path is absent"
+}
+
 test_teardown_refuses_orca_missing_worktree_id() {
   local proj wt data state config id out rc neutral
   id="orcamissingidz5"
@@ -437,5 +469,6 @@ test_spawn_writes_orca_metadata_and_launches_harness
 test_spawn_refuses_orca_nonisolated_worktree
 test_peek_send_and_crew_state_route_through_orca_meta
 test_scout_teardown_removes_orca_worktree_via_helper
+test_teardown_removes_orca_worktree_when_path_missing
 test_teardown_refuses_orca_missing_worktree_id
 test_secondmate_force_teardown_removes_orca_child_via_orca

@@ -693,7 +693,19 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
-if [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
+if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
+  if [ -d "$WT" ]; then
+    branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+    if [ "$branch" != "HEAD" ]; then
+      if git -C "$WT" checkout --detach -q 2>/dev/null; then
+        git -C "$WT" branch -D "$branch" >/dev/null 2>&1 || true
+      fi
+    fi
+    rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js" "$WT/.fm-grok-turnend"
+  fi
+  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  fm_backend_remove_worktree "$BACKEND" "$ORCA_WORKTREE_ID"
+elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   if [ "$branch" != "HEAD" ]; then
     if git -C "$WT" checkout --detach -q 2>/dev/null; then
@@ -702,15 +714,10 @@ if [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fi
   # Remove our hook file so a reused pool worktree cannot fire signals for a dead task.
   rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js" "$WT/.fm-grok-turnend"
-  if [ "$BACKEND" = orca ]; then
-    fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
-    fm_backend_remove_worktree "$BACKEND" "$ORCA_WORKTREE_ID"
-  else
-    # Kills remaining processes in the worktree (including the agent), resets, returns
-    # to pool. treehouse resolves the pool from the working directory, so run it from
-    # the project.
-    ( cd "$PROJ" && treehouse return --force "$WT" )
-  fi
+  # Kills remaining processes in the worktree (including the agent), resets, returns
+  # to pool. treehouse resolves the pool from the working directory, so run it from
+  # the project.
+  ( cd "$PROJ" && treehouse return --force "$WT" )
 fi
 
 if [ "$BACKEND" != orca ]; then
