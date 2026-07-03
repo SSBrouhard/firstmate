@@ -243,6 +243,21 @@ test_codex_app_backend_cached_capture_and_liveness() {
     || fail "codex-app backend should report uncached recorded thread ids as existing"
   [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = unknown ] \
     || fail "codex-app backend visible threads should report unknown busy state"
+  (
+    local routed_state routed_data routed_home routed_out
+    routed_home="$TMP_ROOT/codex-app-routed-home"
+    routed_state="$TMP_ROOT/codex-app-routed-state"
+    routed_data="$TMP_ROOT/codex-app-routed-data"
+    mkdir -p "$routed_home" "$routed_state" "$routed_data"
+    fm_write_meta "$routed_state/routed.meta" "backend=codex-app" "window=thread-routed" "thread_id=thread-routed" "codex_app_thread_state=visible"
+    printf 'one\ntwo\n' > "$routed_state/routed.codex-app.capture"
+    FM_HOME="$routed_home"
+    FM_STATE_OVERRIDE="$routed_state"
+    FM_DATA_OVERRIDE="$routed_data"
+    export -n FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE 2>/dev/null || true
+    routed_out=$(fm_backend_capture codex-app thread-routed 1)
+    [ "$routed_out" = "two" ] || fail "codex-app backend should forward resolved unexported FM_HOME/FM_STATE_OVERRIDE/FM_DATA_OVERRIDE"
+  )
   if FM_HOME="$home" fm_backend_kill codex-app thread-codex 2>"$home/kill-visible.err"; then
     fail "codex-app backend kill should refuse visible, app-owned threads"
   fi

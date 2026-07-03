@@ -4,7 +4,11 @@
 # ledger as a backend target and refuses operations that must happen in Desktop.
 
 fm_backend_codex_app_cmd() {
-  "$FM_BACKEND_LIB_DIR/fm-codex-app" "$@"
+  FM_ROOT="$FM_ROOT" \
+  FM_HOME="$FM_HOME" \
+  FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-$FM_HOME/state}" \
+  FM_DATA_OVERRIDE="${FM_DATA_OVERRIDE:-$FM_HOME/data}" \
+    "$FM_BACKEND_LIB_DIR/fm-codex-app" "$@"
 }
 
 fm_backend_codex_app_capture() {  # <thread-id> <lines>
