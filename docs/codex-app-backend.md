@@ -167,10 +167,10 @@ The available Codex CLI and app-server probes found useful pieces but not a supp
 - A raw proxy attempt against the Desktop control socket did not accept plain JSON-RPC framing.
 
 That is not enough to add `codex-app` to `FM_BACKEND_KNOWN` or `FM_BACKEND_SPAWN`.
-A Firstmate backend must be able to create a thread, start or continue turns, read live state while turns run, and archive/stop the same endpoint through a Codex Desktop-supported shell-callable API.
+A Firstmate backend must be able to create a thread, start or continue turns, read live state while turns run, and archive/stop the same endpoint through a stable Codex Desktop-supported shell-callable API.
 Shipping a local ledger would only record intentions; it would not supervise the actual Desktop thread.
 
-## Required Codex Desktop bridge
+## Required Codex Desktop bridge before implementation
 
 Firstmate should implement a Codex App adapter only after Codex Desktop exposes one of these supported interfaces:
 
