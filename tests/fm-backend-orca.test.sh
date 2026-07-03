@@ -577,6 +577,43 @@ test_secondmate_force_teardown_removes_orca_child_via_orca() {
   pass "fm-teardown.sh --force: removes Orca secondmate children through Orca"
 }
 
+test_secondmate_force_teardown_removes_partial_orca_child() {
+  local home subhome childproj childwt child_id neutral out rc
+  home="$TMP_ROOT/orca-partial-child-parent"
+  subhome="$TMP_ROOT/orca-partial-child-secondmate"
+  childproj="$subhome/projects/alpha"
+  childwt="$TMP_ROOT/orca-partial-child-worktree"
+  child_id="orcapartialz9"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$subhome/projects"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_git_worktree "$childproj" "$childwt" "fm/$child_id"
+  fm_write_meta "$home/state/domain.meta" \
+    "window=firstmate:fm-domain" "worktree=$subhome" "project=$subhome" \
+    "harness=echo" "kind=secondmate" "mode=secondmate" "yolo=off" \
+    "home=$subhome" "projects=alpha"
+  printf '%s\n' "- domain - Orca partial child cleanup (home: $subhome; scope: orca cleanup; projects: alpha; added 2026-07-03)" \
+    > "$home/data/secondmates.md"
+  fm_write_meta "$subhome/state/$child_id.meta" \
+    "window=fm-$child_id" "worktree=$childwt" "project=$childproj" \
+    "harness=claude" "kind=ship" "mode=no-mistakes" "yolo=off" \
+    "backend=orca" "orca_worktree_id=wt-partial-child"
+  orca_case secondmate-partial-child-cleanup
+  add_tmux_fake "$FB"
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  set +e
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_HOME="$home" "$ROOT/bin/fm-teardown.sh" domain --force 2>&1 )
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "forced secondmate teardown should remove partial Orca child state"$'\n'"$out"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm'$'\x1f''--worktree'$'\x1f''id:wt-partial-child'$'\x1f''--force'$'\x1f''--json' \
+    "partial child cleanup did not remove the Orca worktree through orca worktree rm"
+  assert_not_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close' \
+    "partial child cleanup should not close a terminal when no terminal handle is recorded"
+  assert_absent "$home/state/domain.meta" "parent metadata should be removed after forced partial cleanup"
+  pass "fm-teardown.sh --force: removes partial Orca secondmate children"
+}
+
 test_dispatcher_sources_orca_and_routes_primitives() {
   local out
   orca_case dispatch
@@ -610,3 +647,4 @@ test_teardown_removes_orca_worktree_when_path_missing
 test_teardown_refuses_orca_missing_worktree_id
 test_teardown_removes_orca_worktree_without_terminal_handle
 test_secondmate_force_teardown_removes_orca_child_via_orca
+test_secondmate_force_teardown_removes_partial_orca_child

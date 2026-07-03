@@ -538,7 +538,6 @@ validate_firstmate_home_children_removal() {
       validate_firstmate_home_for_removal "$child_home" "child firstmate home" "$child_id" >/dev/null || return 1
       validate_firstmate_home_children_removal "$child_home" || return 1
     elif [ "$child_backend" = orca ]; then
-      require_orca_terminal "$child_meta" >/dev/null || return 1
       require_orca_worktree_id "$child_meta" >/dev/null || return 1
       if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
         child_proj=$(meta_value "$child_meta" project)
@@ -564,7 +563,7 @@ cleanup_firstmate_home_children() {
     [ -n "$child_kind" ] || child_kind=ship
     child_backend=$(fm_backend_of_meta "$child_meta")
     if [ "$child_backend" = orca ]; then
-      child_t=$(require_orca_terminal "$child_meta") || return 1
+      child_t=$(meta_value "$child_meta" terminal)
     else
       child_t=$(fm_backend_target_of_meta "$child_meta")
     fi
