@@ -14,9 +14,8 @@
 #   runtime auto-detection (the runtime firstmate itself is executing inside -
 #   $TMUX or HERDR_ENV=1; bin/fm-backend.sh's fm_backend_detect), then tmux.
 #   Spawn-capable backends are the reference tmux adapter and experimental
-#   herdr and zellij. Orca is a known primitive-only backend for existing
-#   terminals, but task spawning refuses backend=orca before endpoint creation
-#   or meta writes. An auto-detected herdr spawn prints a loud stderr notice;
+#   herdr, zellij, and orca. Orca owns both the task worktree and terminal,
+#   so ship/scout Orca spawns do not run treehouse get. An auto-detected herdr spawn prints a loud stderr notice;
 #   auto-detected tmux stays silent; zellij is never auto-detected (always a
 #   dedicated background session, see bin/backends/zellij.sh). Default tmux
 #   spawns do not write backend= to meta; absent backend= means tmux.
@@ -141,8 +140,8 @@ esac
 
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
 # FM_BACKEND env, else config/backend, else runtime auto-detection, else
-# default tmux (fm_backend_name). fm_backend_validate_spawn refuses unknown
-# backends and known primitive-only backends such as orca. The resolved value is
+# default tmux (fm_backend_name). fm_backend_validate_spawn refuses unknown or
+# non-spawn-capable backends. The resolved value is
 # recorded in meta only when it is NOT tmux (fm-teardown.sh and fm-watch.sh's
 # window_backend/fm_backend_of_meta already treat an absent backend= as tmux),
 # so the default path's meta stays byte-identical.
@@ -621,12 +620,28 @@ EOF
     fi
     T="$ZELLIJ_SES:$ZELLIJ_PANE_ID"
     ;;
+  orca)
+    if [ "$KIND" = secondmate ]; then
+      echo "error: backend=orca does not support --secondmate spawns yet" >&2
+      exit 1
+    fi
+    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W") || exit 1
+    ORCA_WORKTREE_ID=${ORCA_WT_RAW%%$'\t'*}
+    WT=${ORCA_WT_RAW#*$'\t'}
+    if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
+      echo "error: orca did not return a worktree id/path for $W" >&2
+      exit 1
+    fi
+    ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+    T="$ORCA_TERMINAL"
+    ;;
 esac
 spawn_send_text_line() {  # <target> <text>
   case "$BACKEND" in
     tmux) fm_backend_tmux_send_text_line "$1" "$2" ;;
     herdr) fm_backend_herdr_send_text_line "$1" "$2" ;;
     zellij) fm_backend_zellij_send_text_line "$1" "$2" "$W" ;;
+    orca) fm_backend_orca_send_text_line "$1" "$2" ;;
   esac
 }
 spawn_current_path() {  # <target>
@@ -641,6 +656,7 @@ spawn_send_literal() {  # <target> <text>
     tmux) fm_backend_tmux_send_literal "$1" "$2" ;;
     herdr) fm_backend_herdr_send_literal "$1" "$2" ;;
     zellij) fm_backend_zellij_send_literal "$1" "$2" "$W" ;;
+    orca) fm_backend_orca_send_literal "$1" "$2" ;;
   esac
 }
 spawn_send_key() {  # <target> <key>
@@ -648,9 +664,10 @@ spawn_send_key() {  # <target> <key>
     tmux) fm_backend_tmux_send_key "$1" "$2" ;;
     herdr) fm_backend_herdr_send_key "$1" "$2" ;;
     zellij) fm_backend_zellij_send_key "$1" "$2" "$W" ;;
+    orca) fm_backend_orca_send_key "$1" "$2" ;;
   esac
 }
-if [ "$KIND" != secondmate ]; then
+if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   spawn_send_text_line "$T" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
@@ -820,8 +837,10 @@ $("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
 EOF
 fi
 
+META_WINDOW=$T
+[ "$BACKEND" = orca ] && META_WINDOW=$W
 {
-  echo "window=$T"
+  echo "window=$META_WINDOW"
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
@@ -845,6 +864,10 @@ fi
     echo "zellij_session=$ZELLIJ_SES"
     echo "zellij_tab_id=$ZELLIJ_TAB_ID"
     echo "zellij_pane_id=$ZELLIJ_PANE_ID"
+  fi
+  if [ "$BACKEND" = orca ]; then
+    echo "orca_worktree_id=$ORCA_WORKTREE_ID"
+    echo "terminal=$ORCA_TERMINAL"
   fi
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
@@ -875,4 +898,4 @@ spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
 spawn_send_key "$T" Enter
 
-echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$T worktree=$WT"
+echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT"

@@ -17,9 +17,8 @@
 # auto-detection (report.md's Open Question #2: start with a dedicated
 # background session for predictability, unlike tmux's/herdr's ambient-session
 # reuse); see report.md's "Zellij Backend" section and docs/zellij-backend.md
-# for its empirical basis. The Orca adapter is currently primitive-only for
-# already-created terminals, so fm-spawn.sh validates against FM_BACKEND_SPAWN
-# and refuses backend=orca until lifecycle wiring exists.
+# for its empirical basis. P4 makes Orca spawn-capable: Orca owns both the
+# task worktree and the terminal endpoint.
 #
 # Compatibility contract: a task's meta may omit `backend=`; every reader here
 # treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
@@ -51,10 +50,10 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # v0.7.1/protocol-14 binary (data/fm-backend-design-d7/herdr-verification-p2.md)
 # but newer than tmux's long-proven default path. zellij is EXPERIMENTAL (P3;
 # data/fm-backend-design-d7/report.md "Zellij Backend") - verified against the
-# real 0.44.0 binary (docs/zellij-backend.md). orca currently exposes only
-# terminal adapter primitives; spawn/teardown lifecycle wiring is a later slice.
+# real 0.44.0 binary (docs/zellij-backend.md). orca is EXPERIMENTAL and
+# spawn-capable; unlike tmux/herdr/zellij it is also the worktree provider.
 FM_BACKEND_KNOWN="tmux herdr zellij orca"
-FM_BACKEND_SPAWN="tmux herdr zellij"
+FM_BACKEND_SPAWN="tmux herdr zellij orca"
 
 # fm_backend_is_known: 0 iff <name> has a verified adapter.
 fm_backend_is_known() {  # <name>
@@ -159,12 +158,24 @@ fm_backend_of_meta() {  # <meta-file>
   printf '%s' "${v:-tmux}"
 }
 
+fm_backend_target_of_meta() {  # <meta-file>
+  local meta=$1 backend terminal window
+  backend=$(fm_backend_of_meta "$meta")
+  if [ "$backend" = orca ]; then
+    terminal=$(fm_meta_get "$meta" terminal)
+    [ -n "$terminal" ] && { printf '%s' "$terminal"; return 0; }
+  fi
+  window=$(fm_meta_get "$meta" window)
+  [ -n "$window" ] && printf '%s' "$window"
+}
+
 fm_backend_meta_for_window() {  # <target> <state-dir>
-  local target=$1 state=$2 meta window
+  local target=$1 state=$2 meta window terminal
   for meta in "$state"/*.meta; do
     [ -e "$meta" ] || continue
     window=$(fm_meta_get "$meta" window)
-    [ "$window" = "$target" ] || continue
+    terminal=$(fm_meta_get "$meta" terminal)
+    [ "$window" = "$target" ] || [ "$terminal" = "$target" ] || continue
     printf '%s' "$meta"
     return 0
   done
@@ -236,7 +247,8 @@ fm_backend_source() {  # <name>
 # selector to a live session-provider target. Three forms, in order:
 #   target with ":"   used as-is (the escape hatch for a window/pane outside
 #                      this firstmate home) - backend-independent, a literal string.
-#   "fm-<id>"          routed through <state-dir>/<id>.meta's `window=` field -
+#   "fm-<id>"          routed through <state-dir>/<id>.meta's backend target
+#                      (`window=` normally, `terminal=` for Orca) -
 #                      backend-independent, a stored value, NOT re-verified
 #                      against a live backend inventory (matches today's
 #                      behavior: tmux window names can be trusted from meta
@@ -259,8 +271,8 @@ fm_backend_resolve_selector() {  # <raw-target> <state-dir>
         echo "error: no metadata for $raw in $state; pass session:window to target a window outside this firstmate home" >&2
         return 1
       fi
-      window=$(fm_meta_get "$meta" window)
-      [ -n "$window" ] || { echo "error: no window recorded in $meta" >&2; return 1; }
+      window=$(fm_backend_target_of_meta "$meta")
+      [ -n "$window" ] || { echo "error: no backend target recorded in $meta" >&2; return 1; }
       printf '%s' "$window"
       return 0
       ;;

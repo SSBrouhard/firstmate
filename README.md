@@ -57,7 +57,7 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 **Requirements:** a verified agent harness (claude, codex, opencode, pi, or grok), git with GitHub auth, and tmux for the reference session backend.
 Experimental herdr spawns additionally require `herdr` and `jq`, checked at spawn time.
 Experimental zellij spawns additionally require `zellij` and `jq`, checked at spawn time.
-Primitive-only Orca terminal capture, text send, Enter/Ctrl-C keys, and close require the `orca` CLI only when `backend=orca` is selected, but Orca cannot spawn tasks yet.
+Experimental Orca spawns additionally require the `orca` CLI when `backend=orca` is selected; Orca owns both the task worktree and terminal endpoint, but Escape remains unsupported.
 The first mate detects and offers to install everything else.
 
 ```sh
@@ -123,8 +123,8 @@ When that profile file exists, crewmate and scout spawns must pass the resolved 
 Secondmate launch can use a separate local `config/secondmate-harness`, whose first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]` to durably pin that secondmate's launch profile.
 The runtime session-provider backend is selected from explicit `--backend`, `FM_BACKEND`, local `config/backend`, runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then the hard `tmux` default.
 `tmux` is the verified reference backend.
-`herdr` and `zellij` are experimental task-spawn backends; herdr can also be auto-detected, while zellij is selected only explicitly.
-`orca` currently exposes capture, text send, Enter/Ctrl-C keys, and close for existing terminals only.
+`herdr`, `zellij`, and `orca` are experimental task-spawn backends; herdr can also be auto-detected, while zellij and orca are selected only explicitly.
+Unlike tmux/herdr/zellij, Orca provides the task worktree as well as the terminal endpoint.
 Secondmate homes inherit the primary's declared local config, including `config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend`, at launch, during the locked session-start bootstrap step, or during an explicit `bin/fm-config-push.sh` run, so their own crewmates, dispatch profiles, and backlog backend use the primary settings.
 When a routed request goes to a secondmate, firstmate marks it so the answer returns through status or a document pointer; direct typing into that secondmate window stays conversational.
 A presence-gated sub-supervisor (`/afk`) can self-handle routine events and batch only what matters while you step away.
@@ -168,7 +168,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, runtime backend selection, optional X mode, the files you set, and harness support.
 - [docs/herdr-backend.md](docs/herdr-backend.md) - experimental herdr backend verification notes and known gaps.
 - [docs/zellij-backend.md](docs/zellij-backend.md) - experimental zellij backend verification notes and known gaps.
-- [docs/orca-backend.md](docs/orca-backend.md) - proposed Orca backend adapter contract before an implementation PR.
+- [docs/orca-backend.md](docs/orca-backend.md) - experimental Orca backend lifecycle notes and known gaps.
 - [docs/scripts.md](docs/scripts.md) - the `bin/` toolbelt reference.
 - [`AGENTS.md`](AGENTS.md) - firstmate's full operating manual for the orchestrator agent.
 - [CONTRIBUTING.md](CONTRIBUTING.md) - how to contribute, including the dev/test commands.

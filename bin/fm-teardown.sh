@@ -62,11 +62,16 @@ WT=$(grep '^worktree=' "$META" | cut -d= -f2-)
 T=$(grep '^window=' "$META" | cut -d= -f2-)
 PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
 BACKEND=$(fm_backend_of_meta "$META")
+if [ "$BACKEND" = orca ]; then
+  T_ORCA=$(grep '^terminal=' "$META" | tail -1 | cut -d= -f2- || true)
+  [ -n "$T_ORCA" ] && T=$T_ORCA
+fi
 HOME_PATH=$(grep '^home=' "$META" | cut -d= -f2- || true)
 PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 # tasktmp is recorded by fm-spawn for tasks that set up a per-task temp root
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
+ORCA_WORKTREE_ID=$(grep '^orca_worktree_id=' "$META" | cut -d= -f2- || true)
 
 KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
@@ -652,13 +657,20 @@ if [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fi
   # Remove our hook file so a reused pool worktree cannot fire signals for a dead task.
   rm -f "$WT/.claude/settings.local.json" "$WT/.opencode/plugins/fm-turn-end.js" "$WT/.fm-grok-turnend"
-  # Kills remaining processes in the worktree (including the agent), resets, returns
-  # to pool. treehouse resolves the pool from the working directory, so run it from
-  # the project.
-  ( cd "$PROJ" && treehouse return --force "$WT" )
+  if [ "$BACKEND" = orca ]; then
+    fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+    fm_backend_orca_remove_worktree "$ORCA_WORKTREE_ID"
+  else
+    # Kills remaining processes in the worktree (including the agent), resets, returns
+    # to pool. treehouse resolves the pool from the working directory, so run it from
+    # the project.
+    ( cd "$PROJ" && treehouse return --force "$WT" )
+  fi
 fi
 
-fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+if [ "$BACKEND" != orca ]; then
+  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
