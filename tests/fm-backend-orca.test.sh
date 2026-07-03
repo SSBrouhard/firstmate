@@ -93,6 +93,18 @@ test_capture_falls_back_to_text_fields() {
   pass "fm_backend_orca_capture: falls back to result text fields"
 }
 
+test_capture_fails_on_orca_error_json() {
+  local out status
+  orca_case capture-error-json
+  printf '{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal handle stale"}}\n' > "$RESP/1.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_capture term-stale 5' "$ROOT" 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "capture should fail on Orca ok:false read JSON"
+  assert_contains "$out" "terminal handle stale" "capture should surface the Orca read error message"
+  pass "fm_backend_orca_capture: fails closed on Orca read error JSON"
+}
+
 test_send_text_submit_constructs_enter_send() {
   local out
   orca_case send-submit
@@ -506,6 +518,33 @@ test_peek_send_and_crew_state_route_through_orca_meta() {
   pass "fm-peek/fm-send/fm-crew-state route through backend=orca metadata"
 }
 
+test_peek_and_crew_state_fail_closed_on_orca_error_json() {
+  local wt state id out status neutral
+  id="orcareaderrz7"
+  wt="$TMP_ROOT/read-error-wt"
+  fm_git_init_commit "$wt"
+  state="$TMP_ROOT/read-error-state"; mkdir -p "$state"
+  fm_write_meta "$state/$id.meta" \
+    "window=fm-$id" "terminal=term-stale" "worktree=$wt" "project=$wt" "harness=claude" "kind=scout" "backend=orca"
+  touch "$state/.last-watcher-beat"
+  orca_case read-error-json
+  neutral=$(neutral_fm_root "$CASE_DIR/neutral")
+  printf '{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal handle stale"}}\n' > "$RESP/1.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$neutral" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-peek.sh" "fm-$id" 10 2>&1 )
+  status=$?
+  [ "$status" -ne 0 ] || fail "fm-peek should fail when Orca reports a stale terminal"
+  assert_contains "$out" "terminal handle stale" "fm-peek should surface the Orca read error message"
+  printf '{"ok":false,"error":{"code":"terminal_handle_stale","message":"terminal handle stale"}}\n' > "$RESP/2.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-crew-state.sh" "$id" )
+  assert_contains "$out" "state: unknown" "crew-state should not treat an Orca read error as a live endpoint"
+  assert_contains "$out" "backend target gone: term-stale" "crew-state should report the stale Orca terminal as gone"
+  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''read'$'\x1f''--terminal'$'\x1f''term-stale' \
+    "fm-peek/fm-crew-state did not read the recorded Orca terminal"
+  pass "fm-peek/fm-crew-state: Orca read error JSON fails closed"
+}
+
 test_scout_teardown_removes_orca_worktree_via_helper() {
   local proj wt data state config id out rc neutral
   id="orcateardownz3"
@@ -893,6 +932,7 @@ test_dispatcher_sources_orca_and_routes_primitives() {
 
 test_capture_reads_terminal_tail_json
 test_capture_falls_back_to_text_fields
+test_capture_fails_on_orca_error_json
 test_send_text_submit_constructs_enter_send
 test_send_literal_constructs_non_enter_send
 test_send_text_submit_reports_send_failed
@@ -913,6 +953,7 @@ test_spawn_removes_orca_worktree_when_terminal_create_fails
 test_spawn_preserves_orca_metadata_when_abort_cleanup_fails
 test_spawn_releases_orca_resources_when_metadata_write_fails
 test_peek_send_and_crew_state_route_through_orca_meta
+test_peek_and_crew_state_fail_closed_on_orca_error_json
 test_scout_teardown_removes_orca_worktree_via_helper
 test_teardown_removes_orca_worktree_when_path_missing
 test_scout_teardown_refuses_orca_missing_report_when_path_missing

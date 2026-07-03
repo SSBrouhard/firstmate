@@ -129,12 +129,17 @@ fm_backend_orca_worktree_path() {
 }
 
 fm_backend_orca_capture() {  # <terminal-id> <lines>
-  local terminal=$1 lines=${2:-40}
+  local terminal=$1 lines=${2:-40} out
   fm_backend_orca_tool_check || return 1
-  orca terminal read --terminal "$terminal" --limit "$lines" --json \
-    | node -e '
+  out=$(orca terminal read --terminal "$terminal" --limit "$lines" --json) || return 1
+  printf '%s' "$out" | node -e '
 const fs = require("fs");
 const data = JSON.parse(fs.readFileSync(0, "utf8"));
+if (data.ok === false) {
+  const msg = data.error && (data.error.message || data.error.code);
+  if (msg) console.error(msg);
+  process.exit(2);
+}
 const r = data.result || {};
 if (r.terminal && Array.isArray(r.terminal.tail)) {
   process.stdout.write(r.terminal.tail.join("\n"));
