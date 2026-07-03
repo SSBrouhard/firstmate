@@ -670,6 +670,7 @@ test_codex_app_teardown_refuses_visible_thread() {
     "mode=no-mistakes"
   mkdir -p "$case_dir/data/task-x1"
   printf 'report\n' > "$case_dir/data/task-x1/report.md"
+  printf 'cached transcript\n' > "$case_dir/state/task-x1.codex-app.capture"
 
   set +e
   FM_DATA_OVERRIDE="$case_dir/data" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -707,6 +708,33 @@ test_codex_app_teardown_refuses_archived_missing_worktree() {
   pass "Codex App teardown refuses protected tasks without a real worktree"
 }
 
+test_codex_app_teardown_refuses_project_checkout_worktree() {
+  local case_dir rc
+  case_dir=$(make_case codex-project-checkout)
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "backend=codex-app" \
+    "window=thread-archived" \
+    "thread_id=thread-archived" \
+    "codex_app_thread_state=archived" \
+    "codex_app_archived=1" \
+    "worktree=$case_dir/project" \
+    "project=$case_dir/project" \
+    "kind=scout" \
+    "mode=no-mistakes"
+  mkdir -p "$case_dir/data/task-x1"
+  printf 'report\n' > "$case_dir/data/task-x1/report.md"
+
+  set +e
+  FM_DATA_OVERRIDE="$case_dir/data" run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "codex-project-checkout: teardown should refuse project checkout even under force"
+  grep -q 'worktree is the project checkout' "$case_dir/stderr" || fail "codex-project-checkout: refusal did not cite project checkout ownership"
+  [ -d "$case_dir/project" ] || fail "codex-project-checkout: refused teardown removed project checkout"
+  pass "Codex App teardown refuses project checkouts as disposable worktrees"
+}
+
 test_codex_app_teardown_allows_archived_scout_with_report() {
   local case_dir rc
   case_dir=$(make_case codex-archived-scout)
@@ -730,6 +758,7 @@ test_codex_app_teardown_allows_archived_scout_with_report() {
 
   expect_code 0 "$rc" "codex-archived-scout: teardown should allow archived Codex App scout with report"
   [ ! -f "$case_dir/state/task-x1.meta" ] || fail "codex-archived-scout: successful teardown left meta behind"
+  [ ! -f "$case_dir/state/task-x1.codex-app.capture" ] || fail "codex-archived-scout: successful teardown left capture cache behind"
   pass "Codex App teardown allows archived scout tasks only after the report gate"
 }
 
@@ -770,4 +799,5 @@ test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses
 test_codex_app_teardown_refuses_visible_thread
 test_codex_app_teardown_refuses_archived_missing_worktree
+test_codex_app_teardown_refuses_project_checkout_worktree
 test_codex_app_teardown_allows_archived_scout_with_report

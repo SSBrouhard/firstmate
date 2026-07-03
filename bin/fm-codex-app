@@ -5,6 +5,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const childProcess = require("node:child_process");
 
 function looksLikeFleetRoot(dir) {
   return fs.existsSync(path.join(dir, "state"))
@@ -97,6 +98,60 @@ function validateProtectedTaskState(kind, projectPath, worktreePath, action) {
   if (!worktreePath) throw new Error(`${action} requires --worktree for ${kind} tasks`);
   if (!fs.existsSync(worktreePath) || !fs.statSync(worktreePath).isDirectory()) {
     throw new Error(`${action} requires --worktree to name an existing directory: ${worktreePath}`);
+  }
+  validateDisposableWorktree(projectPath, worktreePath, action);
+}
+
+function realDir(dir) {
+  return fs.realpathSync.native(dir);
+}
+
+function gitOutput(cwd, args) {
+  return childProcess.execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+}
+
+function validateDisposableWorktree(projectPath, worktreePath, action) {
+  let projectRoot;
+  let worktreeRoot;
+  try {
+    projectRoot = realDir(gitOutput(projectPath, ["rev-parse", "--show-toplevel"]));
+  } catch {
+    throw new Error(`${action} requires project to be a git worktree: ${projectPath}`);
+  }
+  try {
+    worktreeRoot = realDir(gitOutput(worktreePath, ["rev-parse", "--show-toplevel"]));
+  } catch {
+    throw new Error(`${action} requires --worktree to be a git worktree: ${worktreePath}`);
+  }
+  const expectedWorktree = realDir(worktreePath);
+  if (worktreeRoot !== expectedWorktree) {
+    throw new Error(`${action} requires --worktree to name a git worktree root: ${worktreePath}`);
+  }
+  if (worktreeRoot === projectRoot) {
+    throw new Error(`${action} requires --worktree to be distinct from the project checkout: ${worktreePath}`);
+  }
+  let listed;
+  try {
+    listed = childProcess.execFileSync("git", ["-C", projectPath, "-c", "core.quotePath=false", "worktree", "list", "--porcelain"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    throw new Error(`${action} requires --worktree to be registered with project: ${worktreePath}`);
+  }
+  const registered = listed
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length))
+    .some((entry) => {
+      try {
+        return realDir(entry) === worktreeRoot;
+      } catch {
+        return false;
+      }
+    });
+  if (!registered) {
+    throw new Error(`${action} requires --worktree to be a registered linked worktree for project: ${worktreePath}`);
   }
 }
 

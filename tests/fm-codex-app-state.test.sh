@@ -7,9 +7,10 @@ trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/state"
 PROJECT="$TMP/project"
-mkdir -p "$PROJECT"
 WT="$TMP/wt"
-mkdir -p "$WT"
+git init -q "$PROJECT"
+git -C "$PROJECT" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "baseline"
+git -C "$PROJECT" worktree add -q -b fm/state-test "$WT"
 ID=state-test
 META="$TMP/state/$ID.meta"
 cat > "$META" <<EOF
@@ -137,6 +138,11 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-
   exit 1
 fi
 grep -q 'requires --kind ship or --kind scout' "$TMP/unsafe-record.err"
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-project --kind scout --project "$PROJECT" --worktree "$PROJECT" 2>"$TMP/unsafe-project-record.err"; then
+  echo "expected record-thread with project checkout as worktree to fail" >&2
+  exit 1
+fi
+grep -q 'distinct from the project checkout' "$TMP/unsafe-project-record.err"
 FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread prepared-unsafe thread-safe --kind scout --project "$PROJECT" --worktree "$WT" >/dev/null
 grep -qx 'kind=scout' "$TMP/state/prepared-unsafe.meta"
 grep -qx "project=$PROJECT" "$TMP/state/prepared-unsafe.meta"
@@ -172,6 +178,20 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread missing-worktree thread-
   exit 1
 fi
 grep -q 'existing directory' "$TMP/missing-worktree.err"
+
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread project-worktree thread-project-worktree "$PROJECT" --kind scout --worktree "$PROJECT" 2>"$TMP/project-worktree.err"; then
+  echo "expected adoption with project checkout as worktree to fail" >&2
+  exit 1
+fi
+grep -q 'distinct from the project checkout' "$TMP/project-worktree.err"
+
+PLAIN_CLONE="$TMP/plain-clone"
+git clone -q "$PROJECT" "$PLAIN_CLONE"
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread plain-clone thread-plain-clone "$PROJECT" --kind scout --worktree "$PLAIN_CLONE" 2>"$TMP/plain-clone.err"; then
+  echo "expected adoption with plain clone worktree to fail" >&2
+  exit 1
+fi
+grep -q 'registered linked worktree' "$TMP/plain-clone.err"
 
 if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" adopt-thread adopted thread-3 "$PROJECT" --kind scout 2>"$TMP/duplicate-task.err"; then
   echo "expected duplicate task adoption to fail" >&2
