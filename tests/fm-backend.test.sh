@@ -200,11 +200,16 @@ test_backend_name_explicit_beats_detection() {
 
 test_backend_validate_refuses_unknown() {
   fm_backend_validate tmux 2>/dev/null || fail "fm_backend_validate should accept tmux"
-  fm_backend_validate codex-app 2>/dev/null || fail "fm_backend_validate should accept codex-app"
+  fm_backend_validate codex-app 2>/dev/null || fail "fm_backend_validate should accept codex-app for adopted metadata"
+  if fm_backend_validate_spawnable codex-app 2>"$TMP_ROOT/codex-spawnable.err"; then
+    fail "fm_backend_validate_spawnable should refuse codex-app until spawn lifecycle exists"
+  fi
+  assert_contains "$(cat "$TMP_ROOT/codex-spawnable.err")" "cannot create new shell endpoints yet" \
+    "codex-app spawn refusal did not explain the visible-thread path"
   local out
   out=$(fm_backend_validate zellij 2>&1) && fail "fm_backend_validate should refuse zellij (P1 has no such adapter)"
   assert_contains "$out" "unknown backend 'zellij'" "fm_backend_validate did not name the rejected backend"
-  pass "fm_backend_validate: tmux and codex-app accepted, an unimplemented backend refused loudly"
+  pass "fm_backend_validate: tmux/codex-app known, codex-app not spawnable, unknown refused loudly"
 }
 
 test_meta_get_and_backend_of_meta() {
@@ -229,8 +234,13 @@ test_codex_app_backend_cached_capture_and_liveness() {
 
   out=$(FM_HOME="$home" fm_backend_capture codex-app thread-codex 2)
   [ "$out" = "$(printf 'beta\ngamma')" ] || fail "codex-app backend should capture cached thread text"
+  fm_write_meta "$home/state/codex-uncached.meta" "backend=codex-app" "window=thread-uncached" "thread_id=thread-uncached" "codex_app_thread_state=visible"
+  out=$(FM_HOME="$home" fm_backend_capture codex-app thread-uncached 2)
+  [ "$out" = "" ] || fail "codex-app backend should return empty capture for uncached recorded threads"
   FM_HOME="$home" fm_backend_target_exists codex-app thread-codex \
     || fail "codex-app backend should report recorded thread ids as existing"
+  FM_HOME="$home" fm_backend_target_exists codex-app thread-uncached \
+    || fail "codex-app backend should report uncached recorded thread ids as existing"
   [ "$(FM_HOME="$home" fm_backend_busy_state codex-app thread-codex)" = unknown ] \
     || fail "codex-app backend visible threads should report unknown busy state"
 
@@ -587,6 +597,36 @@ test_spawn_refuses_unknown_fm_backend_env() {
   pass "fm-spawn.sh honors FM_BACKEND and refuses an unimplemented value loudly"
 }
 
+test_spawn_refuses_codex_app_selection() {
+  local out status config
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" nope-codex-z1 projects/none claude --backend codex-app 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "fm-spawn --backend codex-app should refuse until spawn lifecycle exists"
+  assert_contains "$out" "cannot create new shell endpoints yet" "codex-app --backend refusal did not explain the restriction"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=codex-app \
+    "$ROOT/bin/fm-spawn.sh" nope-codex-z2 projects/none claude 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "FM_BACKEND=codex-app should refuse until spawn lifecycle exists"
+  assert_contains "$out" "cannot create new shell endpoints yet" "codex-app FM_BACKEND refusal did not explain the restriction"
+
+  config="$TMP_ROOT/codex-config-backend"
+  mkdir -p "$config"
+  printf 'codex-app\n' > "$config/backend"
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE="$config" FM_SPAWN_NO_GUARD=1 \
+    "$ROOT/bin/fm-spawn.sh" nope-codex-z3 projects/none claude 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "config/backend=codex-app should refuse until spawn lifecycle exists"
+  assert_contains "$out" "cannot create new shell endpoints yet" "codex-app config/backend refusal did not explain the restriction"
+
+  pass "fm-spawn.sh refuses codex-app from --backend, FM_BACKEND, and config/backend until spawn lifecycle exists"
+}
+
 test_spawn_default_backend_writes_no_meta_field() {
   local proj wt data id state config out
   proj="$TMP_ROOT/nobackend-project"; wt="$TMP_ROOT/nobackend-wt"; data="$TMP_ROOT/nobackend-data"
@@ -679,6 +719,7 @@ test_spawn_conformance_old_vs_new
 test_teardown_conformance_old_vs_new
 test_spawn_refuses_unknown_backend_flag
 test_spawn_refuses_unknown_fm_backend_env
+test_spawn_refuses_codex_app_selection
 test_spawn_default_backend_writes_no_meta_field
 test_spawn_explicit_backend_flag_beats_autodetect_herdr_env
 test_spawn_autodetect_nesting_resolves_tmux_silently

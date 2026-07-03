@@ -118,8 +118,8 @@ Persistent secondmate homes are linked firstmate worktrees; locked session start
 Crewmate dispatch can stay on a static `config/crew-harness` or use optional natural-language profiles in local `config/crew-dispatch.json` to choose a per-task harness, model, and effort.
 When that profile file exists, crewmate and scout spawns must pass the resolved harness explicitly so `config/crew-harness` is not used as an unnoticed bypass.
 Secondmate launch can use a separate local `config/secondmate-harness`, whose first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]` to durably pin that secondmate's launch profile.
-The runtime session-provider backend is selected from explicit `--backend`, `FM_BACKEND`, local `config/backend`, runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then the hard `tmux` default.
-`tmux` is the verified reference backend, `herdr` is experimental, and `codex-app` is a visible-thread ledger for threads owned by Codex Desktop rather than a headless spawn surface.
+The runtime session-provider backend for new spawns is selected from explicit `--backend`, `FM_BACKEND`, local `config/backend`, runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then the hard `tmux` default.
+`tmux` is the verified reference backend and `herdr` is experimental; `codex-app` is only a visible-thread ledger for prepared or adopted Codex Desktop threads until a full spawn lifecycle exists.
 Secondmate homes inherit the primary's declared local config, including `config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend`, at launch, during the locked session-start bootstrap step, or during an explicit `bin/fm-config-push.sh` run, so their own crewmates, dispatch profiles, and backlog backend use the primary settings.
 When a routed request goes to a secondmate, firstmate marks it so the answer returns through status or a document pointer; direct typing into that secondmate window stays conversational.
 A presence-gated sub-supervisor (`/afk`) can self-handle routine events and batch only what matters while you step away.

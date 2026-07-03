@@ -78,6 +78,14 @@ function ensureMetaExists(taskId, action) {
   }
 }
 
+function ensureCodexAppMeta(taskId, action) {
+  const meta = readMeta(taskId);
+  if (meta.backend !== "codex-app") {
+    throw new Error(`${action} requires backend=codex-app meta for task ${taskId}; refusing to overwrite ${meta.backend || "tmux/default"} routing`);
+  }
+  return meta;
+}
+
 function writeMeta(taskId, values) {
   ensureState();
   const file = metaPath(taskId);
@@ -207,6 +215,7 @@ async function main() {
     const [taskId, threadId, ...rest] = args;
     if (!taskId || !threadId) usage();
     ensureMetaExists(taskId, "record-thread");
+    ensureCodexAppMeta(taskId, "record-thread");
     const flags = parseFlags(rest);
     const existing = taskForThread(threadId);
     if (existing && existing.taskId !== taskId) {
@@ -308,6 +317,8 @@ async function main() {
         console.log(lastLines(fs.readFileSync(file, "utf8"), Number.isFinite(limit) && limit > 0 ? limit : 40));
         return;
       }
+      console.log("");
+      return;
     }
     console.error(`error: ${hostToolMessage("capture", threadId, found?.taskId)}`);
     process.exit(2);

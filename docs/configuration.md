@@ -22,9 +22,11 @@ The runtime session-provider backend controls where task windows/endpoints are c
 `tmux` is the verified reference backend; `herdr` is a second, experimental backend (see `docs/herdr-backend.md`) - treehouse remains the worktree provider for both, since herdr is a session provider only.
 `codex-app` is a Codex Desktop visible-thread ledger (see `docs/codex-app-backend.md`): it records/adopts app-owned threads and cached captures, but does not create or drive a headless task endpoint.
 Spawn-created session endpoints choose the backend in this order: explicit `fm-spawn.sh --backend <name>`, then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then default `tmux`.
+Only `tmux` and `herdr` are currently accepted for new spawns.
 If both runtime markers are present, `$TMUX` wins because tmux is the innermost surface firstmate is running on.
 Auto-detected herdr prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
-Any value other than `tmux`, `herdr`, or `codex-app` is rejected until another adapter is implemented and verified.
+Any value other than `tmux`, `herdr`, or a metadata-only adapter such as `codex-app` is rejected until another adapter is implemented and verified.
+Selecting `codex-app` through `--backend`, `FM_BACKEND`, or `config/backend` is rejected by `fm-spawn.sh` until a complete visible-thread spawn lifecycle exists; use `bin/fm-codex-app prepare` or `adopt-thread` instead.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
@@ -183,7 +185,7 @@ FM_STATE_OVERRIDE=       # alternate state dir, mainly for tests
 FM_DATA_OVERRIDE=        # alternate data dir, mainly for tests
 FM_PROJECTS_OVERRIDE=    # alternate projects dir, mainly for tests
 FM_CONFIG_OVERRIDE=      # alternate config dir, mainly for tests
-FM_BACKEND=             # optional runtime session-provider backend override; tmux (reference), herdr (experimental), or codex-app (Codex Desktop visible-thread ledger, not a headless spawn surface)
+FM_BACKEND=             # optional runtime session-provider backend override for new spawns; tmux (reference) or herdr (experimental)
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest
 FM_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording

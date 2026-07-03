@@ -41,7 +41,9 @@ bin/fm-codex-app record-capture <task-id> <capture-file|->
 ```
 
 `fm-peek.sh` and `fm_backend_capture codex-app <thread-id> <lines>` then read the tail of `state/<task-id>.codex-app.capture`.
-If no cached transcript exists, capture fails with a Desktop instruction instead of fabricating data.
+If no cached transcript exists for a recorded thread, capture succeeds with empty output.
+That keeps passive liveness and peek-style readers from treating a visible Desktop thread as gone merely because firstmate has not cached a transcript yet.
+An unrecorded thread id still fails with a Desktop instruction.
 
 Text send, interrupt, and archive operations are app-owned.
 The adapter exits with a clear instruction to use Codex Desktop, then mirror the result into firstmate state.
@@ -53,6 +55,9 @@ bin/fm-codex-app mark-archived <task-id>
 
 Archived threads report `status=archived`; the backend maps that to `idle`.
 Visible or pending threads report unknown busy state, so supervision does not claim a live Desktop thread is idle without an explicit archived marker.
+
+`codex-app` is not selectable for new spawns through `--backend`, `FM_BACKEND`, or `config/backend` until a complete visible-thread spawn lifecycle exists.
+Use `prepare`, `record-thread`, or `adopt-thread` to create codex-app metadata for Desktop-owned visible threads.
 
 ## Smoke evidence
 

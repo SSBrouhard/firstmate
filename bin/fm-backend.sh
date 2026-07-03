@@ -45,12 +45,21 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # but newer than tmux's long-proven default path. codex-app is app-owned visible
 # thread state, not a headless task creator.
 FM_BACKEND_KNOWN="tmux herdr codex-app"
+FM_BACKEND_SPAWNABLE="tmux herdr"
 
 # fm_backend_is_known: 0 iff <name> has a verified adapter.
 fm_backend_is_known() {  # <name>
   local name=$1 known
   for known in $FM_BACKEND_KNOWN; do
     [ "$name" = "$known" ] && return 0
+  done
+  return 1
+}
+
+fm_backend_is_spawnable() {  # <name>
+  local name=$1 backend
+  for backend in $FM_BACKEND_SPAWNABLE; do
+    [ "$name" = "$backend" ] && return 0
   done
   return 1
 }
@@ -117,6 +126,16 @@ fm_backend_validate() {  # <name>
   local name=$1
   if ! fm_backend_is_known "$name"; then
     echo "error: unknown backend '$name' (known: $FM_BACKEND_KNOWN)" >&2
+    return 1
+  fi
+  return 0
+}
+
+fm_backend_validate_spawnable() {  # <name>
+  local name=$1
+  fm_backend_validate "$name" || return 1
+  if ! fm_backend_is_spawnable "$name"; then
+    echo "error: backend '$name' cannot create new shell endpoints yet (spawnable: $FM_BACKEND_SPAWNABLE); use bin/fm-codex-app prepare/adopt-thread for Codex App visible threads" >&2
     return 1
   fi
   return 0

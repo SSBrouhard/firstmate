@@ -44,6 +44,16 @@ grep -qx 'codex_app_pending_worktree_id=pending-2' "$PENDING_META"
 printf 'first\nsecond\nthird\n' | FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-capture "$ID" - >/dev/null
 [ "$(FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" capture thread-1 2)" = "$(printf 'second\nthird')" ]
 
+UNCACHED_ID=uncached-thread
+UNCACHED_META="$TMP/state/$UNCACHED_ID.meta"
+cat > "$UNCACHED_META" <<EOF
+backend=codex-app
+window=thread-uncached
+thread_id=thread-uncached
+EOF
+[ "$(FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" capture thread-uncached 2)" = "" ]
+FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" status thread-uncached | grep -qx 'status=visible'
+
 FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" mark-archived "$ID" >/dev/null
 grep -qx 'codex_app_archived=1' "$META"
 grep -qx 'codex_app_thread_state=archived' "$META"
@@ -73,6 +83,20 @@ if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread missing thread-missing 
   exit 1
 fi
 grep -q 'requires existing meta' "$TMP/missing-meta.err"
+
+cat > "$TMP/state/not-codex.meta" <<EOF
+window=fm-not-codex
+project=/tmp/example
+harness=codex
+kind=scout
+mode=no-mistakes
+yolo=off
+EOF
+if FM_ROOT="$TMP" "$ROOT/bin/fm-codex-app" record-thread not-codex thread-not-codex 2>"$TMP/not-codex.err"; then
+  echo "expected record-thread on non-codex meta to fail" >&2
+  exit 1
+fi
+grep -q 'requires backend=codex-app meta' "$TMP/not-codex.err"
 
 mkdir -p "$TMP/data"
 cat > "$TMP/data/projects.md" <<EOF

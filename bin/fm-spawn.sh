@@ -150,7 +150,7 @@ if [ "$BACKEND_SET" -eq 1 ]; then
 else
   BACKEND=$(fm_backend_name)
 fi
-fm_backend_validate "$BACKEND" || exit 1
+fm_backend_validate_spawnable "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
