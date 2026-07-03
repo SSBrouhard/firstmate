@@ -52,6 +52,7 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # real 0.44.0 binary (docs/zellij-backend.md). orca currently exposes only
 # terminal adapter primitives; spawn/teardown lifecycle wiring is a later slice.
 FM_BACKEND_KNOWN="tmux herdr zellij orca"
+FM_BACKEND_SPAWN="tmux herdr zellij"
 
 # fm_backend_is_known: 0 iff <name> has a verified adapter.
 fm_backend_is_known() {  # <name>
@@ -127,6 +128,16 @@ fm_backend_validate() {  # <name>
     return 1
   fi
   return 0
+}
+
+fm_backend_validate_spawn() {  # <name>
+  local name=$1 backend
+  fm_backend_validate "$name" || return 1
+  for backend in $FM_BACKEND_SPAWN; do
+    [ "$name" = "$backend" ] && return 0
+  done
+  echo "error: backend '$name' does not support task spawning yet (spawn-supported: $FM_BACKEND_SPAWN)" >&2
+  return 1
 }
 
 # fm_meta_get: the LAST value of `key=` in <meta-file>, or empty (never
