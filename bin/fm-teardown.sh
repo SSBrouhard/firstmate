@@ -640,6 +640,15 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
   cleanup_firstmate_home_children "$HOME_PATH"
 fi
 
+if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
+  REPORT="$DATA/$ID/report.md"
+  if [ ! -f "$REPORT" ]; then
+    echo "REFUSED: scout task $ID has no report at $REPORT." >&2
+    echo "The report is the work product. Have the crewmate write it, or use --force after explicit discard approval." >&2
+    exit 1
+  fi
+fi
+
 if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$FORCE" != "--force" ]; then
   if ! inspectable_git_worktree "$WT"; then
     echo "REFUSED: Orca ship task $ID has no inspectable git worktree at ${WT:-<missing>}." >&2
@@ -652,13 +661,7 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   if [ "$KIND" = secondmate ]; then
     :
   elif [ "$KIND" = scout ]; then
-    # Scout worktrees are scratch by contract, but only once the deliverable exists.
-    REPORT="$DATA/$ID/report.md"
-    if [ ! -f "$REPORT" ]; then
-      echo "REFUSED: scout task $ID has no report at $REPORT." >&2
-      echo "The report is the work product. Have the crewmate write it (or get the captain's explicit OK to discard, then --force)." >&2
-      exit 1
-    fi
+    :
   else
     # The fm-spawn hook file is ours, never work product; ignore it in the dirty check.
     dirty=$(git -C "$WT" status --porcelain 2>/dev/null | grep -vE '^\?\? (\.claude/|\.fm-grok-turnend$)' | head -1 || true)
