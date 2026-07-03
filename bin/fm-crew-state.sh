@@ -28,7 +28,7 @@
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
 #      agree, and are reported as parked.
 #   4. No run for this crew (pre-validation, or kind=scout): fall back to the
-#      recorded backend's pane busy state, then the status log's last line.
+#      recorded backend's endpoint busy state, then the status log's last line.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead window also reports unknown · none rather
 #      than trusting a stale status log.
@@ -121,7 +121,7 @@ LOG_VERB=$(log_verb_of "$LOG_LINE")
 # shell - so a finished crew whose window has closed still reports its run-step
 # state (e.g. done) instead of being masked as unknown. Backend-aware
 # (fm_backend_of_meta defaults absent backend= to tmux, the P1 contract): a
-# herdr task is read through fm_backend_capture instead of a bare tmux probe.
+# non-tmux task is read through fm_backend_capture instead of a bare tmux probe.
 TASK_BACKEND=$(fm_backend_of_meta "$META")
 pane_readable() {  # <target>
   case "$TASK_BACKEND" in
@@ -130,9 +130,9 @@ pane_readable() {  # <target>
   esac
 }
 # crew_pane_is_busy: the busy-signature fallback, backend-aware the same way -
-# fm_backend_busy_state's native semantic state (herdr's agent.get) when
-# available, else the shared tmux pane-regex reader (fm_pane_is_busy,
-# bin/fm-tmux-lib.sh) unchanged for tmux/unknown.
+# fm_backend_busy_state's native semantic state when available, else the shared
+# tmux pane-regex reader (fm_pane_is_busy, bin/fm-tmux-lib.sh) unchanged for
+# tmux/unknown.
 #
 # `busy` alone is trusted outright. Both `idle` and unknown/unparseable fall
 # through to the shared tail-regex corroboration, NOT just unknown: herdr's

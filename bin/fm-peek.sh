@@ -3,6 +3,7 @@
 # Usage: fm-peek.sh <target> [lines=40]
 #   <target> may be a bare firstmate task name (fm-xyz), resolved through
 #   this home's state/<id>.meta, or an explicit backend target.
+# Codex App targets print the cached transcript tail recorded with fm-codex-app.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

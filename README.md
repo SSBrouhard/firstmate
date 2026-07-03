@@ -85,7 +85,7 @@ Outside tmux, default-backend crewmates land in a detached `firstmate` session y
 When firstmate is running natively inside herdr and no backend override is set, it auto-detects herdr, prints an opt-out notice, and spawns into the experimental herdr backend.
 With experimental herdr, attach to the selected `HERDR_SESSION` and switch between firstmate-home workspaces.
 The primary home uses `firstmate`; each secondmate home uses `2ndmate-<secondmate-id>`, with that home's task tabs inside its own space.
-Codex App visible threads are app-owned: firstmate can record/adopt their thread ids, cache captures, and reconcile liveness, while sends, interrupts, and archive actions are performed from Codex Desktop.
+Codex App visible threads are app-owned: firstmate can prepare or adopt their thread ids, cache captures, and reconcile liveness, while sends, interrupts, and archive actions are performed from Codex Desktop.
 
 ## How It Works
 

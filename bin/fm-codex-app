@@ -31,7 +31,7 @@ function usage() {
   console.error(`usage:
   fm-codex-app prepare <task-id> <thread-name> <brief-file>
   fm-codex-app record-thread <task-id> <thread-id> [--turn-id <id>] [--worktree <path>] [--pending-worktree-id <id>]
-  fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> [--thread-name <name>] [--mode <mode>] [--yolo <on|off>] [--worktree <path>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
+  fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
   fm-codex-app record-pending <task-id> <pending-worktree-id>
   fm-codex-app record-capture <task-id> <capture-file|->
   fm-codex-app mark-archived <task-id>

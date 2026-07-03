@@ -9,7 +9,7 @@ Firstmate records enough local state for its normal backend abstraction to recon
 ## State model
 
 Use `bin/fm-codex-app prepare <task-id> <thread-name> <brief-file>` before creating or forking a visible thread from a brief.
-It writes pending task metadata with `backend=codex-app`, `window=<thread-name>`, `codex_app_thread_name=`, `codex_app_thread_state=pending`, `codex_app_pending_action=create_thread_or_fork_thread`, and `codex_app_transport=visible-thread`.
+It writes pending task metadata with `backend=codex-app`, `window=<thread-name>`, `harness=codex`, `codex_app_thread_name=`, `codex_app_thread_state=pending`, `codex_app_pending_action=create_thread_or_fork_thread`, `codex_app_transport=visible-thread`, and `codex_app_brief=`.
 
 After Codex Desktop has a real thread, record it with:
 
@@ -19,14 +19,17 @@ bin/fm-codex-app record-thread <task-id> <thread-id> [--turn-id <id>] [--worktre
 
 That changes `window=` to the thread id, records `thread_id=`, sets `codex_app_thread_state=visible`, and clears the pending action.
 `record-pending` stores a pending worktree id when Desktop has created a worktree request but the final thread id is not known yet.
+`record-thread` can also record `turn_id=`, `worktree=`, and `codex_app_pending_worktree_id=`.
 
 To bring an already-visible Desktop thread under firstmate supervision, use:
 
 ```sh
-bin/fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> [--thread-name <name>] [--mode <mode>] [--yolo <on|off>] [--worktree <path>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
+bin/fm-codex-app adopt-thread <task-id> <thread-id> <project-path> --kind <ship|scout> --worktree <path> [--thread-name <name>] [--harness <name>] [--mode <mode>] [--yolo <on|off>] [--turn-id <id>] [--pending-worktree-id <id>] [--brief <path>]
 ```
 
 Adoption refuses duplicate task ids and duplicate thread ids.
+`--worktree` must name an existing directory for both ship and scout tasks.
+When `--harness` is omitted, adoption records `harness=codex`.
 If `--mode` or `--yolo` is omitted, it resolves the project mode from `data/projects.md` and falls back to `no-mistakes`/`off`.
 
 ## Backend operations
@@ -41,6 +44,7 @@ bin/fm-codex-app record-capture <task-id> <capture-file|->
 ```
 
 `fm-peek.sh` and `fm_backend_capture codex-app <thread-id> <lines>` then read the tail of `state/<task-id>.codex-app.capture`.
+Recording a capture also updates `codex_app_last_capture=` in the task meta.
 If no cached transcript exists for a recorded thread, capture succeeds with empty output.
 That keeps passive liveness and peek-style readers from treating a visible Desktop thread as gone merely because firstmate has not cached a transcript yet.
 An unrecorded thread id still fails with a Desktop instruction.
@@ -55,6 +59,7 @@ bin/fm-codex-app mark-archived <task-id>
 
 Archived threads report `status=archived`; the backend maps that to `idle`.
 Visible or pending threads report unknown busy state, so supervision does not claim a live Desktop thread is idle without an explicit archived marker.
+`fm-teardown.sh` refuses codex-app tasks until the thread is archived in Desktop and marked archived in the ledger.
 
 `codex-app` is not selectable for new spawns through `--backend`, `FM_BACKEND`, or `config/backend` until a complete visible-thread spawn lifecycle exists.
 Use `prepare`, `record-thread`, or `adopt-thread` to create codex-app metadata for Desktop-owned visible threads.
@@ -73,5 +78,6 @@ archive=ok
 restart_reconcile=ok
 ```
 
+Each required key also accepts `yes`, `true`, or `1`.
 The checker rejects `app_server_only=ok` or `headless_only=ok`.
 That is deliberate: a headless app-server proof does not verify the visible Codex App thread workflow firstmate relies on.

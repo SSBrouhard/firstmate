@@ -41,9 +41,9 @@ mkdir -p "$STATE"
 # (capture, recorded windows, backend busy-state, and the BUSY_REGEX fallback)
 # synthesizes the signal/stale/check/heartbeat wake vocabulary for backends with
 # no native event push. tmux always reports unknown busy-state, preserving the
-# original regex path. herdr contributes native semantic busy-state through the
-# same poll loop until a future push subscription replaces this default source;
-# see bin/fm-backend.sh and docs/herdr-backend.md.
+# original regex path. herdr contributes native semantic busy-state, and codex-app
+# reports idle only after the visible thread is marked archived in the ledger;
+# see bin/fm-backend.sh plus docs/herdr-backend.md and docs/codex-app-backend.md.
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 
@@ -155,8 +155,7 @@ hash_pane() {
 
 # window_is_busy: 0 (busy) iff the task's harness is actively working. Prefers
 # a backend's native semantic busy state (fm_backend_busy_state - herdr's
-# agent.get; herdr-addendum "busy state" row, "the first backend where
-# fm_session_busy_state gets real semantics"); falls back to the existing
+# agent.get or codex-app's archived marker); falls back to the existing
 # pane-tail regex ONLY when the backend reports unknown (tmux always does, so
 # its path is unchanged byte-for-byte). <tail40> is the same bounded capture
 # already read for hashing, so this adds no extra backend calls on the

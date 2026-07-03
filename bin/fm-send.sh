@@ -10,7 +10,8 @@
 # Enter is positively confirmed (the text is still sitting in the composer after
 # all retries), fm-send exits NON-ZERO so the caller knows the steer did not land
 # instead of silently leaving an unsubmitted instruction (incident afk-invx-i5).
-# Submission dispatches through the target's recorded backend; the tmux adapter
+# Submission dispatches through the target's recorded backend; app-owned Codex
+# App targets refuse sends and point back to Codex Desktop. The tmux adapter
 # shares its composer/submit core with the away-mode daemon via bin/fm-tmux-lib.sh.
 # Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
 # Slash commands, and codex `$...` skill invocations resolved through harness
