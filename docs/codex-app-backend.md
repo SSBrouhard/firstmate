@@ -1,7 +1,7 @@
 # Codex App backend contract
 
-Status: blocked for Firstmate as a selectable shell backend.
-The Codex Desktop host-tool loop works, including status-file writes, but Firstmate does not yet have a supported shell-callable bridge to those host tools.
+Status: blocked for Firstmate as a selectable shell backend because Codex Desktop does not currently expose a supported shell-callable API or CLI bridge to the verified host tools.
+The Codex Desktop host-tool loop works, including status-file writes.
 
 This document replaces the earlier passive visible-thread ledger shape.
 A manual ledger is not a backend.
