@@ -10,6 +10,37 @@ fm_backend_orca_tool_check() {
   command -v orca >/dev/null 2>&1 || { echo "error: backend=orca selected but the 'orca' CLI is not installed" >&2; return 1; }
 }
 
+fm_backend_orca_runtime_check() {
+  fm_backend_orca_tool_check || return 1
+  local out
+  out=$(orca status --json 2>/dev/null) || {
+    echo "error: backend=orca selected but 'orca status --json' failed; start Orca and wait for the runtime to be ready" >&2
+    return 1
+  }
+  printf '%s' "$out" | node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  console.error("error: invalid Orca status JSON: " + err.message);
+  process.exit(1);
+}
+if (data.ok === false) {
+  const msg = data.error && (data.error.message || data.error.code);
+  console.error("error: Orca runtime is not ready" + (msg ? ": " + msg : ""));
+  process.exit(1);
+}
+const r = data.result || {};
+const runtime = r.runtime || {};
+const reachable = runtime.reachable ?? r.runtimeReachable;
+const state = runtime.state || r.runtimeState || "";
+if (reachable === true && state === "ready") process.exit(0);
+console.error(`error: backend=orca requires a ready Orca runtime (reachable=${String(reachable)}, state=${state || "unknown"})`);
+process.exit(1);
+'
+}
+
 fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id
   local field=$1
   node -e '
@@ -22,8 +53,8 @@ if (data.ok === false) {
   process.exit(2);
 }
 const r = data.result || {};
-const wt = r.worktree || r.createdWorktree || r.item || r;
-const explicitTerm = r.terminal || r.createdTerminal || r.defaultTerminal || r.initialTerminal || wt.terminal || wt.createdTerminal || wt.defaultTerminal || wt.initialTerminal || r.tab || r.pane || null;
+const wt = r.worktree || r.item || r;
+const explicitTerm = r.terminal || wt.terminal || null;
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";
@@ -31,13 +62,13 @@ function scalar(v) {
 function handle(obj, allowRootId) {
   if (!obj) return "";
   if (typeof obj === "string" || typeof obj === "number") return String(obj);
-  return scalar(obj.handle) || scalar(obj.terminal) || scalar(obj.terminalHandle) || scalar(obj.terminalId) || (allowRootId ? scalar(obj.id) : "") || "";
+  return scalar(obj.handle) || (allowRootId ? scalar(obj.id) : "") || "";
 }
 let v = "";
 if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
-if (field === "terminal-handle") v = handle(explicitTerm || r, true) || scalar(r.handle) || scalar(r.terminal) || scalar(r.terminalHandle) || scalar(r.terminalId) || "";
-if (field === "worktree-terminal-handle") v = handle(explicitTerm, true) || scalar(r.terminal) || scalar(r.terminalHandle) || scalar(r.terminalId) || "";
+if (field === "terminal-handle") v = handle(explicitTerm || r, true) || "";
+if (field === "worktree-terminal-handle") v = handle(explicitTerm, true) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));
@@ -158,7 +189,11 @@ fm_backend_orca_capture() {  # <terminal-id> <lines>
   local terminal=$1 lines=${2:-40} out
   fm_backend_orca_tool_check || return 1
   out=$(orca terminal read --terminal "$terminal" --limit "$lines" --json) || return 1
-  printf '%s' "$out" | node -e '
+  fm_backend_orca_json_text "$out"
+}
+
+fm_backend_orca_json_text() {  # <json>
+  printf '%s' "$1" | node -e '
 const fs = require("fs");
 const data = JSON.parse(fs.readFileSync(0, "utf8"));
 if (data.ok === false) {
@@ -175,6 +210,83 @@ if (r.terminal && Array.isArray(r.terminal.tail)) {
   process.stdout.write(r.text || r.output || r.content || r.preview || "");
 }
 '
+}
+
+fm_backend_orca_json_field() {  # <field> <json>
+  local field=$1
+  printf '%s' "$2" | node -e '
+const fs = require("fs");
+const field = process.argv[1];
+const data = JSON.parse(fs.readFileSync(0, "utf8"));
+if (data.ok === false) process.exit(2);
+const r = data.result || {};
+const term = r.terminal || {};
+function scalar(v) {
+  return (typeof v === "string" || typeof v === "number" || typeof v === "boolean") ? String(v) : "";
+}
+let v = "";
+if (field === "limited") v = scalar(r.limited ?? term.limited);
+if (field === "oldestCursor") v = scalar(r.oldestCursor || term.oldestCursor);
+if (field === "nextCursor") v = scalar(r.nextCursor || term.nextCursor);
+if (field === "latestCursor") v = scalar(r.latestCursor || term.latestCursor);
+if (!v) process.exit(1);
+process.stdout.write(v);
+' "$field"
+}
+
+fm_backend_orca_read_text_paged() {  # <terminal-id> <limit>
+  local terminal=$1 limit=${2:-200} out limited oldest cursor_out text
+  fm_backend_orca_tool_check || return 1
+  out=$(orca terminal read --terminal "$terminal" --limit "$limit" --json) || return 1
+  printf '%s' "$out" | fm_backend_orca_json_ok || return 1
+  text=$(fm_backend_orca_json_text "$out") || return 1
+  limited=$(fm_backend_orca_json_field limited "$out" 2>/dev/null || true)
+  oldest=$(fm_backend_orca_json_field oldestCursor "$out" 2>/dev/null || true)
+  if [ "$limited" = true ] && [ -n "$oldest" ]; then
+    cursor_out=$(orca terminal read --terminal "$terminal" --cursor "$oldest" --limit "$limit" --json) || return 1
+    printf '%s' "$cursor_out" | fm_backend_orca_json_ok || return 1
+    text=$(fm_backend_orca_json_text "$cursor_out") || return 1
+  fi
+  printf '%s' "$text"
+}
+
+FM_BACKEND_ORCA_COMPOSER_LINES=${FM_BACKEND_ORCA_COMPOSER_LINES:-200}
+FM_BACKEND_ORCA_IDLE_RE=${FM_BACKEND_ORCA_IDLE_RE:-'^Type a message\.\.\.$'}
+
+fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
+  local terminal=$1 cap line trimmed stripped="" found=0
+  cap=$(fm_backend_orca_read_text_paged "$terminal" "$FM_BACKEND_ORCA_COMPOSER_LINES") || { printf 'unknown'; return 0; }
+  while IFS= read -r line; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ -n "$trimmed" ] || continue
+    case "$trimmed" in
+      '│'*'│'|'┃'*'┃'|'|'*'|') : ;;
+      *) continue ;;
+    esac
+    stripped=$trimmed
+    found=1
+  done < <(printf '%s\n' "$cap")
+  [ "$found" -eq 1 ] || { printf 'unknown'; return 0; }
+  stripped=${stripped//│/}
+  stripped=${stripped//┃/}
+  stripped=${stripped//|/}
+  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
+  stripped="${stripped%"${stripped##*[![:space:]]}"}"
+  case "$stripped" in
+    '❯'|'>'|'$'|'%'|'#') printf 'empty'; return 0 ;;
+  esac
+  case "$stripped" in
+    '❯ '*|'> '*|'$ '*|'% '*|'# '*) stripped=${stripped#??} ;;
+    '❯'*|'>'*|'$'*|'%'*|'#'*) stripped=${stripped#?} ;;
+  esac
+  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
+  stripped="${stripped%"${stripped##*[![:space:]]}"}"
+  [ -n "$stripped" ] || { printf 'empty'; return 0; }
+  if printf '%s' "$stripped" | grep -qE "$FM_BACKEND_ORCA_IDLE_RE"; then
+    printf 'empty'; return 0
+  fi
+  printf 'pending'
 }
 
 fm_backend_orca_send_key() {  # <terminal-id> <key>
@@ -195,13 +307,18 @@ fm_backend_orca_send_key() {  # <terminal-id> <key>
 }
 
 fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sleep> <settle>
-  local terminal=$1 text=$2
+  local terminal=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 state
   fm_backend_orca_tool_check || { printf 'send-failed'; return 0; }
-  if fm_backend_orca_run_json orca terminal send --terminal "$terminal" --text "$text" --enter --json; then
-    printf 'empty'
-  else
-    printf 'send-failed'
-  fi
+  fm_backend_orca_send_literal "$terminal" "$text" || { printf 'send-failed'; return 0; }
+  sleep "$settle"
+  while :; do
+    fm_backend_orca_send_key "$terminal" Enter || true
+    sleep "$sleep_s"
+    state=$(fm_backend_orca_composer_state "$terminal")
+    [ "$state" = pending ] || { printf '%s' "$state"; return 0; }
+    i=$((i + 1))
+    [ "$i" -lt "$retries" ] || { printf 'pending'; return 0; }
+  done
 }
 
 fm_backend_orca_kill() {  # <terminal-id>

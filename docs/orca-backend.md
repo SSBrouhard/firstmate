@@ -11,6 +11,7 @@ This follow-up adds full ship/scout task lifecycle support for `backend=orca`: s
 Orca remains explicit-only.
 Select it with `fm-spawn.sh --backend orca`, `FM_BACKEND=orca`, or local `config/backend`.
 It is not auto-detected from the current process environment.
+Before spawn mutates any repo/worktree state, firstmate runs `orca status --json` and requires the Orca runtime to report reachable/ready.
 
 ## Task Shape
 
@@ -41,14 +42,14 @@ Spawn:
 
 1. Ensure the project repo is registered in Orca, adding it with `orca repo add --path` when needed.
 2. Create an independent Orca worktree with `orca worktree create --repo id:<repo> --name fm-<id> --no-parent --setup skip`.
-3. Reuse the terminal returned by Orca worktree creation, or create a titled terminal in that worktree when Orca returns only the worktree.
+3. Reuse the terminal returned by Orca worktree creation when present, or create a titled terminal in that worktree when Orca returns only the worktree.
 4. Install firstmate's per-harness turn-end hooks in the Orca worktree.
 5. Write metadata, then send `GOTMPDIR` export and the selected harness launch through the recorded Orca terminal.
 
 Operation routing:
 
 - `fm-peek.sh` captures with `orca terminal read`.
-- `fm-send.sh` sends text with `orca terminal send --text ... --enter`.
+- `fm-send.sh` types text with `orca terminal send --text ...`, submits with Enter, and verifies the composer row cleared before returning.
 - `fm-send.sh --key Enter` and `--key C-c` are supported.
 - `fm-watch.sh` treats Orca as a pull backend with no native busy-state primitive, so it falls back to the same terminal-tail busy regex used for tmux and zellij.
 - `fm-crew-state.sh` reads the recorded Orca terminal when no no-mistakes run-step applies.
@@ -65,12 +66,17 @@ Teardown:
 - `--secondmate` spawns still refuse `backend=orca`; secondmate-home semantics need a separate design.
 - Escape is unsupported because the current Orca terminal send primitive exposes Enter and interrupt-style input but no verified Escape operation.
 - Orca is explicit-only and is not selected by runtime auto-detection.
+- Orca currently exposes no stable CLI version or protocol marker. Unlike the herdr/zellij docs, this backend intentionally gates spawn support on runtime reachability from `orca status --json` rather than a version floor.
 
 ## Verification
+
+Real-Orca smoke verification was run against `/usr/local/bin/orca` with `/Applications/Orca.app` reporting bundle version `1.4.116`; `orca status --json` reported `result.runtime.reachable=true` and `result.runtime.state="ready"`.
+The verified terminal creation handle field is `result.terminal.handle` from `orca terminal create --json`; worktree creation returned `result.worktree.id` and `result.worktree.path` in the same smoke run.
 
 Fake-Orca tests cover:
 
 - helper parsing for repo registration, worktree creation, implicit-terminal reuse, terminal creation, terminal sends, and worktree removal;
+- runtime readiness gating through `orca status --json`;
 - `fm-spawn.sh --backend orca` metadata creation and harness launch;
 - `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` routing through recorded Orca metadata;
 - scout teardown releasing an Orca worktree through `orca worktree rm`.
