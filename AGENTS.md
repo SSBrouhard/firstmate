@@ -282,7 +282,7 @@ Each adapter splits into mechanics and knowledge.
 The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks) lives in the tables below.
 **Never dispatch a crewmate on an unverified adapter.**
 If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
-If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in `fm-watch.sh` and `fm-tmux-lib.sh` defaults, any needed `FM_COMPOSER_IDLE_RE` empty-composer override, and the knowledge here, and commit.
+If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using fm-spawn's raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in fm-spawn, the busy signature in `fm-watch.sh` and `fm-tmux-lib.sh` defaults, any needed `FM_COMPOSER_IDLE_RE` empty-composer override, any Orca-specific `FM_BACKEND_ORCA_IDLE_RE` or `FM_BACKEND_ORCA_BUSY_RE` override, and the knowledge here, and commit.
 
 ### Detecting harnesses
 
@@ -815,7 +815,7 @@ This is why fewer, cheaper firstmate turns handle the same fleet.
 - **Verified type-once submit model** - the digest is typed once via `send-keys -l`, then submitted with Enter and **verified**.
   Enter is retried, Enter only and never a retype, until the composer is confirmed empty.
   That empty composer is the acknowledgement that the submit landed, using the same dim-ghost-aware and border-aware detector so a ghost-only or bordered-empty claude composer counts as submitted rather than a false "swallowed Enter".
-  `fm-send.sh` shares this primitive and exits non-zero on a positively-confirmed swallow, so firstmate learns a steer did not land instead of leaving it unsubmitted.
+  `fm-send.sh` shares this primitive for tmux targets and uses equivalent terminal-capture verification for Orca targets, exiting non-zero when a steer did not land instead of leaving it unsubmitted.
 - **Marker strip** - `strip_injection_marker` removes the sentinel prefix before classification/relay, so the digest text firstmate sees is clean.
 - **Portable singleton lock** - the daemon uses the repo's mkdir-based lock helper (`fm-wake-lib.sh`) instead of `flock`, which is absent on macOS.
 - **Dedupe across signal/stale/scan** - `classify_signal` and `classify_stale` both check the seen-status marker before escalating, so a status escalated by one path is not re-escalated by another in the same digest.

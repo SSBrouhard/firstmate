@@ -113,8 +113,8 @@ A submit "landed" only when the composer is confirmed empty afterward, using
 the same corrected, border-aware detector as the composer guard.
 A bordered-empty claude composer is recognized as submitted rather than
 mistaken for a swallowed Enter.
-`fm-send.sh` uses the same primitive and exits non-zero
-when a steer's Enter is positively swallowed, so firstmate learns an instruction
+`fm-send.sh` uses the same primitive for tmux targets and equivalent
+terminal-capture verification for Orca targets, exiting non-zero when a steer
 did not land instead of leaving it unsubmitted.
 
 ## Classification policy
