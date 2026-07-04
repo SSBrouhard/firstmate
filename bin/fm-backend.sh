@@ -297,6 +297,7 @@ fm_backend_orca_read_text() {  # <terminal-id> <limit>
 
 FM_BACKEND_ORCA_COMPOSER_LINES=${FM_BACKEND_ORCA_COMPOSER_LINES:-200}
 FM_BACKEND_ORCA_IDLE_RE=${FM_BACKEND_ORCA_IDLE_RE:-${FM_COMPOSER_IDLE_RE:-'^Type a message\.\.\.$'}}
+FM_BACKEND_ORCA_BUSY_RE=${FM_BACKEND_ORCA_BUSY_RE:-${FM_BUSY_REGEX:-'esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel'}}
 
 fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
   local terminal=$1 cap line trimmed stripped="" bordered="" last_trimmed="" prev_trimmed="" found=0
@@ -334,6 +335,9 @@ fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
   case "$stripped" in
     '❯'|'>'|'$'|'%'|'#') printf 'empty'; return 0 ;;
   esac
+  if printf '%s' "$stripped" | grep -qiE "$FM_BACKEND_ORCA_BUSY_RE"; then
+    printf 'empty'; return 0
+  fi
   if [ -z "$bordered" ]; then
     printf 'unknown'; return 0
   fi

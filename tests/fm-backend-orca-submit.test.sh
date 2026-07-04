@@ -128,6 +128,38 @@ test_orca_submit_ignores_historical_bordered_prompt() {
   pass "fm_backend_orca_send_text_submit: ignores historical bordered prompts"
 }
 
+test_orca_submit_verifies_busy_footer_after_enter() {
+  local out log_text enter_count
+  orca_case busy-footer
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/1.out"
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"terminal":{"tail":["esc to interrupt"]}}}\n' > "$RESP/3.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+
+  [ "$out" = empty ] || fail "busy footer should verify submitted Orca text, got '$out'"
+  log_text=$(cat "$LOG")
+  enter_count=$(printf '%s\n' "$log_text" | grep -c $'orca\x1fterminal\x1fsend\x1f--terminal\x1fterm-123\x1f--text\x1f\x1f--enter\x1f--json')
+  [ "$enter_count" -eq 1 ] || fail "busy footer should not trigger retry Enter, got $enter_count"
+  pass "fm_backend_orca_send_text_submit: verifies busy footer after Enter"
+}
+
+test_orca_submit_honors_busy_footer_override() {
+  local out
+  orca_case busy-footer-override
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/1.out"
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"terminal":{"tail":["custom busy"]}}}\n' > "$RESP/3.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_BUSY_REGEX='^custom busy$' \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+
+  [ "$out" = empty ] || fail "Orca should honor FM_BUSY_REGEX for busy footers, got '$out'"
+  pass "fm_backend_orca_send_text_submit: honors busy footer override"
+}
+
 test_orca_composer_state_honors_shared_idle_override() {
   local out
   orca_case shared-idle-override
@@ -194,6 +226,8 @@ test_orca_submit_verifies_unboxed_empty_prompt_after_enter
 test_orca_submit_ignores_historical_unboxed_prompt
 test_orca_submit_ignores_bottom_prompt_like_output
 test_orca_submit_ignores_historical_bordered_prompt
+test_orca_submit_verifies_busy_footer_after_enter
+test_orca_submit_honors_busy_footer_override
 test_orca_composer_state_honors_shared_idle_override
 test_orca_composer_state_does_not_trust_wrapped_unboxed_text
 test_orca_composer_state_popup_placeholder_fill_is_pending
