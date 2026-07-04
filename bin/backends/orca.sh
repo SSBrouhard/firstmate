@@ -17,6 +17,7 @@ fm_backend_orca_runtime_check() {
     echo "error: backend=orca selected but 'orca status --json' failed; start Orca and wait for the runtime to be ready" >&2
     return 1
   }
+  # shellcheck disable=SC2016  # Single quotes are deliberate: ${...} belongs to the Node snippet.
   printf '%s' "$out" | node -e '
 const fs = require("fs");
 let data;
