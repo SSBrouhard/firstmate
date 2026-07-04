@@ -241,6 +241,7 @@ test_orca_send_text_reports_swallowed_codex_skill_enter() {
   fm_write_meta "$meta" "backend=orca" "terminal=term-123" "harness=codex"
   printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/1.out"
   printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/2.out"
+  # shellcheck disable=SC2016 # Literal Codex skill trigger must stay unexpanded.
   printf '{"ok":true,"result":{"terminal":{"tail":["╭──╮","│ > $no-mistakes run validation │","╰──╯"]}}}\n' > "$RESP/3.out"
 
   set +e
