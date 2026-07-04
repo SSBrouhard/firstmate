@@ -6,6 +6,7 @@ Each file also starts with a short header comment.
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `fm-bootstrap.sh`        | Detect required toolchain and version problems, dispatch profile JSON errors or active-rule blocks, default backlog-backend status, primary-checkout `TANGLE:` problems, and actionable clone refresh outcomes; refresh project clones best-effort; locally sync live secondmate homes and propagate declared inheritable config; set up opt-in X mode; install tools only after consent |
+| `fm-backend.sh`          | Shared backend adapter library for tmux, Orca, and Codex App visible-thread dispatch/read/send paths; Orca sends verify composer consumption instead of trusting transport success |
 | `fm-fleet-sync.sh`       | Fetch clones, fast-forward safe default-branch states, self-heal clean detached ancestor drift, report unsafe drift as `STUCK:`, and safely prune branches whose remote is gone |
 | `fm-update.sh`           | Self-update the running firstmate repo and registered secondmate homes with fast-forward-only pulls from origin     |
 | `fm-backlog-handoff.sh`  | Move already-judged in-scope queued backlog items from the main home into a seeded secondmate home                 |
