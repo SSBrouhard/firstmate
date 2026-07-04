@@ -60,7 +60,9 @@ After spawn:
 - Confirm `state/<task-id>.meta` includes `backend=orca`, `terminal=`, `orca_worktree_id=`, and `worktree=`.
 - Start or re-arm `bin/fm-watch.sh` whenever tasks are in flight.
 - Read status/meta files before repeatedly peeking terminals.
-- Steer with short lines through `bin/fm-send.sh fm-<task-id> '...'`; put long instructions in the brief or another file.
+- Steer with short lines through `bin/fm-send.sh fm-<task-id> '...'`; it types once, verifies that the composer consumed the text, retries Enter-only when a popup swallows submission, and fails loudly if the line is still pending.
+- Keep `FM_BACKEND_ORCA_COMPOSER_LINES`, `FM_BACKEND_ORCA_IDLE_RE`, and `FM_BACKEND_ORCA_BUSY_RE` as rare diagnostics overrides for unusual Orca terminal rendering; prefer the defaults unless a failing send shows the capture pattern is wrong.
+- Put long instructions in the brief or another file.
 
 ## Recovery
 

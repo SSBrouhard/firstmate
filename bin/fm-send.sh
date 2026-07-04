@@ -10,8 +10,9 @@
 # Enter is positively confirmed (the text is still sitting in the composer after
 # all retries), fm-send exits NON-ZERO so the caller knows the steer did not land
 # instead of silently leaving an unsubmitted instruction (incident afk-invx-i5).
-# The composer/submit logic is shared with the away-mode daemon via
-# bin/fm-tmux-lib.sh. Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
+# The tmux composer/submit logic is shared with the away-mode daemon via
+# bin/fm-tmux-lib.sh; Orca targets use fm-backend.sh's terminal-read verifier.
+# Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
 # Slash commands, and codex `$...` skill invocations resolved through harness
 # meta, get a longer pre-Enter settle so completion popups do not swallow Enter.
 #
@@ -127,8 +128,8 @@ else
   esac
   retries=${FM_SEND_RETRIES:-3}
   sleep_s=${FM_SEND_SLEEP:-0.4}
-  # Type once, submit, verify. Lenient: only a positively-confirmed swallow
-  # (text still in the composer) is an error; an unreadable pane is assumed sent.
+  # Type once, submit, verify. For explicit tmux targets, be lenient: only a
+  # positively-confirmed swallow is an error; an unreadable pane is assumed sent.
   verdict=$(fm_tmux_submit_core "$T" "$MARK_PREFIX$*" "$retries" "$sleep_s" "$settle")
   case "$verdict" in
     pending)

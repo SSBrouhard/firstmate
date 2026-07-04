@@ -2,6 +2,8 @@
 # Backend helpers for firstmate's visible crew runtime.
 # Default backend is tmux. Set FM_BACKEND=orca or codex-app via
 # config/backend(.env) to use another visible crew backend.
+# Text sends through tmux and Orca verify that Enter actually submitted the
+# typed line; Codex App sends are mediated by the host thread tools.
 
 fm_backend_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd

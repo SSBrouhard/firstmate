@@ -166,7 +166,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | Script                   | Description                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `fm-bootstrap.sh`        | Detect required toolchain problems, dispatch profile status, and optional capability facts; refresh clones best-effort, locally sync live secondmate homes, propagate inheritable config, and install tools only after consent |
-| `fm-backend.sh`          | Shared backend adapter library for tmux, Orca, and Codex App visible-thread dispatch/read/send paths               |
+| `fm-backend.sh`          | Shared backend adapter library for tmux, Orca, and Codex App visible-thread dispatch/read/send paths; Orca sends verify composer consumption instead of trusting transport success |
 | `fm-backend-current`     | Print the active backend selection and profile details                                                             |
 | `fm-backend-use`         | Switch the local backend or named backend profile under gitignored `config/`                                        |
 | `fm-fleet-sync.sh`       | Fetch clones, clean-fast-forward their checked-out default branches, and safely prune branches whose remote is gone |
@@ -184,7 +184,7 @@ The first mate drives these; you rarely need to, but they work by hand too.
 | `fm-watch.sh`            | Singleton-safe one-shot watcher; blocks until supervision work is due, queues it durably, then exits with one reason line |
 | `fm-supervise-daemon.sh` | Presence-gated sub-supervisor for walk-away (`/afk`) supervision: wraps `fm-watch.sh`, self-handles routine wakes in bash, and escalates only captain-relevant events as one verified, batched, single-line digest prefixed with a sentinel marker |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes before handling supervision work                                              |
-| `fm-send.sh`             | Send one verified literal line (or `--key Escape`) to a tmux/Orca crewmate; Codex App mode refuses with the host-tool action |
+| `fm-send.sh`             | Send one verified literal line (or `--key Escape`) to a tmux/Orca crewmate; retries swallowed Enter submits; Codex App mode refuses with the host-tool action |
 | `fm-tmux-lib.sh`         | Shared tmux pane primitives for busy detection, dim-ghost-aware and border-aware composer detection, and verified submit retry |
 | `fm-peek.sh`             | Print a bounded tail of a crewmate session when the backend can expose one                                         |
 | `fm-codex-app`           | Local ledger and safety guard for visible Codex Desktop threads; records thread ids, captures, pending ids, and archive state |
@@ -240,7 +240,10 @@ FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=20   # seconds allowed for bootstrap's best-effort clone refresh
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
 FM_BUSY_REGEX='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|codex-app status: active'   # busy signatures, shared by watcher and helpers
-FM_COMPOSER_IDLE_RE=    # optional empty-composer regex, applied after dim-ghost and border stripping
+FM_COMPOSER_IDLE_RE=    # optional empty-composer regex for tmux/Orca submit verification, applied after stripping prompt chrome
+FM_BACKEND_ORCA_COMPOSER_LINES=200   # Orca terminal lines read while checking whether submitted text left the composer
+FM_BACKEND_ORCA_IDLE_RE=             # Orca empty-composer regex; defaults to FM_COMPOSER_IDLE_RE, then '^Type a message\.\.\.$'
+FM_BACKEND_ORCA_BUSY_RE=             # Orca busy-footer regex; defaults to FM_BUSY_REGEX, then Orca's built-in busy signatures
 FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
 FM_ORCA_CODEX_AUTO_TRUST=0       # opt-in: pre-trust Orca-created Codex project worktrees
@@ -282,6 +285,7 @@ for test_script in tests/*.test.sh test/*.test.sh; do "$test_script"; done   # b
 tests/fm-wake-queue.test.sh               # durable wake queue, singleton behavior, sub-supervisor classifier, /afk presence-gating, border-aware composer, max-defer, and fm-send submit tests
 tests/fm-composer-ghost.test.sh           # dim-ghost stripping, ghost-only composer detection, and escape-free peek tests
 tests/fm-afk-inject-e2e.test.sh           # private-socket end-to-end test of the afk injection path (partial-input deferral, swallowed-Enter retry)
+tests/fm-backend-orca-submit.test.sh      # Orca send verification, swallowed-Enter retry, composer parsing, and override handling
 tests/fm-bootstrap.test.sh                # bootstrap dependency, feature-probe, and crew-dispatch reporting tests
 tests/fm-spawn-dispatch-profile.test.sh   # dispatch profile backstop, harness/model/effort meta, launch flags, batch forwarding, and secondmate exemption
 tests/fm-pr-merge.test.sh                 # PR metadata recording, full-URL parsing, merge-method forwarding, and repo override rejection

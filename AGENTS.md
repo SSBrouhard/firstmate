@@ -594,6 +594,7 @@ Use `bin/fm-codex-app record-capture <id> <file|->` only as a convenience cache 
 
 Covered by section 8.
 Steer a crewmate only with short single lines: use `bin/fm-send.sh` for tmux and Orca sessions, and `send_message_to_thread` for Codex App threads.
+For Orca, `fm-send.sh` types once, presses Enter, reads the recorded terminal, retries Enter-only when text is still pending in the composer, and exits non-zero if submission cannot be verified.
 Anything long belongs in a file the crewmate can read.
 Steer a secondmate the same way.
 Its charter retargets escalation to the main firstmate's status file, so routine internal churn stays inside the secondmate home and only `done`, `blocked`, `needs-decision`, `failed`, or captain-relevant phase changes wake the main firstmate.
