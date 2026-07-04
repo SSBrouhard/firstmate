@@ -49,7 +49,7 @@ Spawn:
 Operation routing:
 
 - `fm-peek.sh` captures with `orca terminal read`.
-- `fm-send.sh` types text with `orca terminal send --text ...`, submits with Enter, and verifies the composer row cleared before returning.
+- `fm-send.sh` types text with `orca terminal send --text ...`, submits with Enter, and verifies the composer row cleared before returning; when Orca reports a limited page, the verifier follows `oldestCursor` and preserves the current tail so older text cannot hide still-pending composer input.
 - `fm-send.sh --key Enter` and `--key C-c` are supported.
 - `fm-watch.sh` treats Orca as a pull backend with no native busy-state primitive, so it falls back to the same terminal-tail busy regex used for tmux and zellij.
 - `fm-crew-state.sh` reads the recorded Orca terminal when no no-mistakes run-step applies.
@@ -58,6 +58,7 @@ Teardown:
 
 - Scout teardown still requires `data/<id>/report.md` unless `--force` is explicitly used.
 - Ship teardown still refuses dirty or unlanded work before any terminal/worktree cleanup.
+- Ship teardown resolves `orca_worktree_id` back through Orca and verifies it matches the inspected `worktree=` path before removing anything; mismatches or uninspectable paths preserve metadata and fail closed.
 - After the existing firstmate safety checks pass, teardown closes the recorded Orca terminal and releases the recorded worktree through `orca worktree rm --worktree id:<orca_worktree_id> --force`.
 - Teardown does not raw-delete Orca worktrees.
 
@@ -79,7 +80,8 @@ Fake-Orca tests cover:
 - runtime readiness gating through `orca status --json`;
 - `fm-spawn.sh --backend orca` metadata creation and harness launch;
 - `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` routing through recorded Orca metadata;
-- scout teardown releasing an Orca worktree through `orca worktree rm`.
+- scout teardown releasing an Orca worktree through `orca worktree rm`;
+- ship teardown failing closed when the recorded Orca worktree id is missing, cannot resolve to a path, or resolves to a different path than `worktree=`.
 
 Run the focused suite with:
 

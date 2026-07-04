@@ -325,7 +325,7 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
 
 # fm_backend_send_text_submit: type text once, then submit and verify,
 # retrying only the submission (never retyping). Echoes the verdict
-# (empty|pending|unknown|send-failed for the tmux and herdr adapters).
+# (empty|pending|unknown|send-failed for submit-verifying adapters).
 fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sleep> <settle> [expected-label]
   local backend=$1
   shift
@@ -399,7 +399,8 @@ fm_backend_busy_state() {  # <backend> <target>
 # server as a side effect via fm_backend_herdr_server_ensure - fine for an
 # operation that is about to use the pane, wrong for a passive liveness
 # probe). A gone tmux window or an unqueryable herdr pane (server down, pane
-# closed) both simply fail, which IS "does not exist" for this purpose.
+# closed), missing zellij pane, or unreadable Orca terminal simply fails, which
+# IS "does not exist" for this purpose.
 # Mirrors fm-crew-state.sh's pane_readable check; exists here as one shared
 # primitive so callers that only need a fast alive/dead read (recovery
 # digests, the session-start fleet digest) do not re-derive it inline.
