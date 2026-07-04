@@ -152,6 +152,24 @@ test_send_text_submit_verifies_empty_composer_after_enter() {
   pass "fm_backend_orca_send_text_submit: verifies empty composer after Enter"
 }
 
+test_send_text_submit_keeps_current_tail_when_limited() {
+  local out log_text enter_count
+  orca_case send-submit-limited-current-pending
+  printf '{"ok":true,"result":{"send":{"handle":"term-123","accepted":true}}}\n' > "$RESP/1.out"
+  printf '{"ok":true,"result":{"send":{"handle":"term-123","accepted":true}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"terminal":{"tail":["noise","│ > hello captain │"],"limited":true,"oldestCursor":"cursor-old"},"limited":true,"oldestCursor":"cursor-old"}}\n' > "$RESP/3.out"
+  printf '{"ok":true,"result":{"terminal":{"tail":["╭──╮","│ > │","╰──╯"],"latestCursor":"cursor-new"}}}\n' > "$RESP/4.out"
+  printf '{"ok":true,"result":{"send":{"handle":"term-123","accepted":true}}}\n' > "$RESP/5.out"
+  printf '{"ok":true,"result":{"terminal":{"tail":["│ > │"]}}}\n' > "$RESP/6.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+  [ "$out" = empty ] || fail "send_text_submit should keep the limited current tail and retry, got '$out'"
+  log_text=$(cat "$LOG")
+  enter_count=$(printf '%s\n' "$log_text" | grep -c $'orca\x1fterminal\x1fsend\x1f--terminal\x1fterm-123\x1f--text\x1f\x1f--enter\x1f--json')
+  [ "$enter_count" -eq 2 ] || fail "send_text_submit should see pending text in the current tail before older cursor text, got $enter_count Enter(s)"
+  pass "fm_backend_orca_send_text_submit: preserves current tail when limited reads fetch older cursor text"
+}
+
 test_send_text_submit_retries_when_composer_stays_pending() {
   local out log_text enter_count
   orca_case send-submit-pending
@@ -1186,6 +1204,7 @@ test_capture_fails_on_orca_error_json
 test_runtime_check_accepts_ready_orca_status
 test_runtime_check_refuses_unready_orca_status
 test_send_text_submit_verifies_empty_composer_after_enter
+test_send_text_submit_keeps_current_tail_when_limited
 test_send_text_submit_retries_when_composer_stays_pending
 test_send_literal_constructs_non_enter_send
 test_send_text_submit_reports_send_failed

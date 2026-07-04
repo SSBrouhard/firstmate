@@ -235,7 +235,7 @@ process.stdout.write(v);
 }
 
 fm_backend_orca_read_text_paged() {  # <terminal-id> <limit>
-  local terminal=$1 limit=${2:-200} out limited oldest cursor_out text
+  local terminal=$1 limit=${2:-200} out limited oldest cursor_out text older_text
   fm_backend_orca_tool_check || return 1
   out=$(orca terminal read --terminal "$terminal" --limit "$limit" --json) || return 1
   printf '%s' "$out" | fm_backend_orca_json_ok || return 1
@@ -245,7 +245,8 @@ fm_backend_orca_read_text_paged() {  # <terminal-id> <limit>
   if [ "$limited" = true ] && [ -n "$oldest" ]; then
     cursor_out=$(orca terminal read --terminal "$terminal" --cursor "$oldest" --limit "$limit" --json) || return 1
     printf '%s' "$cursor_out" | fm_backend_orca_json_ok || return 1
-    text=$(fm_backend_orca_json_text "$cursor_out") || return 1
+    older_text=$(fm_backend_orca_json_text "$cursor_out") || return 1
+    text="${older_text}"$'\n'"${text}"
   fi
   printf '%s' "$text"
 }
