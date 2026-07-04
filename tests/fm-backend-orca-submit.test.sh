@@ -160,6 +160,31 @@ test_orca_submit_honors_busy_footer_override() {
   pass "fm_backend_orca_send_text_submit: honors busy footer override"
 }
 
+test_orca_send_rejects_accepted_false_literal() {
+  local out
+  orca_case rejected-literal
+  printf '{"ok":true,"result":{"send":{"accepted":false}}}\n' > "$RESP/1.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+
+  [ "$out" = send-failed ] || fail "accepted:false literal send should fail, got '$out'"
+  pass "fm_backend_orca_send_text_submit: rejects accepted:false literal sends"
+}
+
+test_orca_send_rejects_accepted_false_enter() {
+  local out
+  orca_case rejected-enter
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/1.out"
+  printf '{"ok":true,"result":{"send":{"accepted":false}}}\n' > "$RESP/2.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+
+  [ "$out" = send-failed ] || fail "accepted:false Enter send should fail, got '$out'"
+  pass "fm_backend_orca_send_text_submit: rejects accepted:false Enter sends"
+}
+
 test_orca_composer_state_honors_shared_idle_override() {
   local out
   orca_case shared-idle-override
@@ -183,6 +208,18 @@ test_orca_composer_state_does_not_trust_wrapped_unboxed_text() {
 
   [ "$out" = unknown ] || fail "wrapped unboxed text should not be treated as verified success, got '$out'"
   pass "fm_backend_orca_composer_state: does not trust wrapped unboxed text"
+}
+
+test_orca_composer_state_keeps_bordered_busy_text_pending() {
+  local out
+  orca_case bordered-busy-text
+  printf '{"ok":true,"result":{"terminal":{"tail":["╭──╮","│ Working... │","╰──╯"]}}}\n' > "$RESP/1.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_composer_state term-123' "$ROOT" )
+
+  [ "$out" = pending ] || fail "busy-looking text in a bordered composer should stay pending, got '$out'"
+  pass "fm_backend_orca_composer_state: keeps bordered busy text pending"
 }
 
 test_orca_composer_state_popup_placeholder_fill_is_pending() {
@@ -228,7 +265,10 @@ test_orca_submit_ignores_bottom_prompt_like_output
 test_orca_submit_ignores_historical_bordered_prompt
 test_orca_submit_verifies_busy_footer_after_enter
 test_orca_submit_honors_busy_footer_override
+test_orca_send_rejects_accepted_false_literal
+test_orca_send_rejects_accepted_false_enter
 test_orca_composer_state_honors_shared_idle_override
 test_orca_composer_state_does_not_trust_wrapped_unboxed_text
+test_orca_composer_state_keeps_bordered_busy_text_pending
 test_orca_composer_state_popup_placeholder_fill_is_pending
 test_orca_send_text_reports_swallowed_codex_skill_enter

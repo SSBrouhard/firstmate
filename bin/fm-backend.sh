@@ -221,6 +221,11 @@ if (data.ok === false) {
   if (msg) console.error(msg);
   process.exit(2);
 }
+const send = data.result && data.result.send;
+if (send && send.accepted === false) {
+  console.error("Orca send rejected");
+  process.exit(2);
+}
 '
 }
 
@@ -335,10 +340,10 @@ fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
   case "$stripped" in
     '❯'|'>'|'$'|'%'|'#') printf 'empty'; return 0 ;;
   esac
-  if printf '%s' "$stripped" | grep -qiE "$FM_BACKEND_ORCA_BUSY_RE"; then
-    printf 'empty'; return 0
-  fi
   if [ -z "$bordered" ]; then
+    if printf '%s' "$stripped" | grep -qiE "$FM_BACKEND_ORCA_BUSY_RE"; then
+      printf 'empty'; return 0
+    fi
     printf 'unknown'; return 0
   fi
   case "$stripped" in
@@ -370,7 +375,7 @@ fm_backend_orca_send_text_submit() {  # <terminal-id> <text> <retries> <enter-sl
   fm_backend_orca_send_literal "$terminal" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
   while :; do
-    fm_backend_orca_send_enter "$terminal" || true
+    fm_backend_orca_send_enter "$terminal" || { printf 'send-failed'; return 0; }
     sleep "$sleep_s"
     state=$(fm_backend_orca_composer_state "$terminal")
     [ "$state" = pending ] || { printf '%s' "$state"; return 0; }
