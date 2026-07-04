@@ -299,8 +299,11 @@ fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
     [ -n "$trimmed" ] || continue
     case "$trimmed" in
-      '│'*'│'|'┃'*'┃'|'|'*'|') : ;;
-      *) continue ;;
+      │*│|┃*┃|\|*\|) : ;;
+      ❯*|\>*|\$*|%*|\#*) : ;;
+      *)
+        printf '%s' "$trimmed" | grep -qE "$FM_BACKEND_ORCA_IDLE_RE" || continue
+        ;;
     esac
     stripped=$trimmed
     found=1
