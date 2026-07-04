@@ -94,6 +94,31 @@ test_orca_submit_ignores_historical_unboxed_prompt() {
   pass "fm_backend_orca_send_text_submit: ignores historical unboxed prompts"
 }
 
+test_orca_composer_state_honors_shared_idle_override() {
+  local out
+  orca_case shared-idle-override
+  printf '{"ok":true,"result":{"terminal":{"tail":["custom idle>"]}}}\n' > "$RESP/1.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    FM_COMPOSER_IDLE_RE='^custom idle>$' \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_composer_state term-123' "$ROOT" )
+
+  [ "$out" = empty ] || fail "Orca should honor FM_COMPOSER_IDLE_RE, got '$out'"
+  pass "fm_backend_orca_composer_state: honors shared idle override"
+}
+
+test_orca_composer_state_detects_wrapped_unboxed_pending() {
+  local out
+  orca_case wrapped-unboxed-pending
+  printf '{"ok":true,"result":{"terminal":{"tail":["❯ this is a long message that wrapped before it was submitted","and the continuation is still in the composer"]}}}\n' > "$RESP/1.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_composer_state term-123' "$ROOT" )
+
+  [ "$out" = pending ] || fail "wrapped unboxed input should be pending, got '$out'"
+  pass "fm_backend_orca_composer_state: detects wrapped unboxed pending input"
+}
+
 test_orca_composer_state_popup_placeholder_fill_is_pending() {
   local out
   orca_case popup-placeholder
@@ -133,5 +158,7 @@ test_orca_send_text_reports_swallowed_codex_skill_enter() {
 test_orca_submit_verifies_empty_composer_after_enter
 test_orca_submit_verifies_unboxed_empty_prompt_after_enter
 test_orca_submit_ignores_historical_unboxed_prompt
+test_orca_composer_state_honors_shared_idle_override
+test_orca_composer_state_detects_wrapped_unboxed_pending
 test_orca_composer_state_popup_placeholder_fill_is_pending
 test_orca_send_text_reports_swallowed_codex_skill_enter

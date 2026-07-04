@@ -289,10 +289,18 @@ fm_backend_orca_read_text_paged() {  # <terminal-id> <limit>
 }
 
 FM_BACKEND_ORCA_COMPOSER_LINES=${FM_BACKEND_ORCA_COMPOSER_LINES:-200}
-FM_BACKEND_ORCA_IDLE_RE=${FM_BACKEND_ORCA_IDLE_RE:-'^Type a message\.\.\.$'}
+FM_BACKEND_ORCA_IDLE_RE=${FM_BACKEND_ORCA_IDLE_RE:-${FM_COMPOSER_IDLE_RE:-'^Type a message\.\.\.$'}}
+FM_BACKEND_ORCA_UNBOXED_WRAP_MIN=${FM_BACKEND_ORCA_UNBOXED_WRAP_MIN:-40}
+
+fm_backend_orca_is_unboxed_prompt() {
+  case "$1" in
+    ❯*|\>*|\$*|%*|\#*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
-  local terminal=$1 cap line trimmed stripped="" bordered="" last_trimmed="" found=0
+  local terminal=$1 cap line trimmed stripped="" bordered="" last_trimmed="" unboxed="" unboxed_suffix=0 found=0
   cap=$(fm_backend_orca_read_text_paged "$terminal" "$FM_BACKEND_ORCA_COMPOSER_LINES") || { printf 'unknown'; return 0; }
   while IFS= read -r line; do
     trimmed="${line#"${line%%[![:space:]]*}"}"
@@ -302,20 +310,25 @@ fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
     case "$trimmed" in
       │*│|┃*┃|\|*\|) bordered=$trimmed ;;
     esac
+    if fm_backend_orca_is_unboxed_prompt "$trimmed"; then
+      unboxed=$trimmed
+      unboxed_suffix=0
+    elif [ -n "$unboxed" ]; then
+      unboxed_suffix=$((unboxed_suffix + 1))
+    fi
   done < <(printf '%s\n' "$cap")
   if [ -n "$bordered" ]; then
     stripped=$bordered
     found=1
-  elif [ -n "$last_trimmed" ]; then
-    case "$last_trimmed" in
-      ❯*|\>*|\$*|%*|\#*) stripped=$last_trimmed; found=1 ;;
-      *)
-        if printf '%s' "$last_trimmed" | grep -qE "$FM_BACKEND_ORCA_IDLE_RE"; then
-          stripped=$last_trimmed
-          found=1
-        fi
-        ;;
-    esac
+  elif [ -n "$last_trimmed" ] && fm_backend_orca_is_unboxed_prompt "$last_trimmed"; then
+    stripped=$last_trimmed
+    found=1
+  elif [ -n "$last_trimmed" ] && printf '%s' "$last_trimmed" | grep -qE "$FM_BACKEND_ORCA_IDLE_RE"; then
+    stripped=$last_trimmed
+    found=1
+  elif [ -n "$unboxed" ] && [ "$unboxed_suffix" -gt 0 ] && [ "${#unboxed}" -ge "$FM_BACKEND_ORCA_UNBOXED_WRAP_MIN" ]; then
+    printf 'pending'
+    return 0
   fi
   [ "$found" -eq 1 ] || { printf 'empty'; return 0; }
   stripped=${stripped//│/}
