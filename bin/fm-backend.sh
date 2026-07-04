@@ -288,21 +288,36 @@ fm_backend_orca_read_text_paged() {  # <terminal-id> <limit>
   printf '%s' "$text"
 }
 
+fm_backend_orca_read_text() {  # <terminal-id> <limit>
+  local terminal=$1 limit=${2:-200} out
+  out=$(orca terminal read --terminal "$terminal" --limit "$limit" --json) || return 1
+  printf '%s' "$out" | fm_backend_orca_json_ok || return 1
+  fm_backend_orca_json_text "$out"
+}
+
 FM_BACKEND_ORCA_COMPOSER_LINES=${FM_BACKEND_ORCA_COMPOSER_LINES:-200}
 FM_BACKEND_ORCA_IDLE_RE=${FM_BACKEND_ORCA_IDLE_RE:-${FM_COMPOSER_IDLE_RE:-'^Type a message\.\.\.$'}}
 
 fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
-  local terminal=$1 cap line trimmed stripped="" bordered="" last_trimmed="" found=0
-  cap=$(fm_backend_orca_read_text_paged "$terminal" "$FM_BACKEND_ORCA_COMPOSER_LINES") || { printf 'unknown'; return 0; }
+  local terminal=$1 cap line trimmed stripped="" bordered="" last_trimmed="" prev_trimmed="" found=0
+  cap=$(fm_backend_orca_read_text "$terminal" "$FM_BACKEND_ORCA_COMPOSER_LINES") || { printf 'unknown'; return 0; }
   while IFS= read -r line; do
     trimmed="${line#"${line%%[![:space:]]*}"}"
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
     [ -n "$trimmed" ] || continue
+    prev_trimmed=$last_trimmed
     last_trimmed=$trimmed
-    case "$trimmed" in
-      │*│|┃*┃|\|*\|) bordered=$trimmed ;;
-    esac
   done < <(printf '%s\n' "$cap")
+  case "$last_trimmed" in
+    │*│|┃*┃|\|*\|)
+      bordered=$last_trimmed
+      ;;
+    *╯*|*╰*)
+      case "$prev_trimmed" in
+        │*│|┃*┃|\|*\|) bordered=$prev_trimmed ;;
+      esac
+      ;;
+  esac
   if [ -n "$bordered" ]; then
     stripped=$bordered
     found=1
@@ -320,7 +335,7 @@ fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
     '❯'|'>'|'$'|'%'|'#') printf 'empty'; return 0 ;;
   esac
   if [ -z "$bordered" ]; then
-    printf 'empty'; return 0
+    printf 'unknown'; return 0
   fi
   case "$stripped" in
     '❯ '*|'> '*|'$ '*|'% '*|'# '*) stripped=${stripped#??} ;;
