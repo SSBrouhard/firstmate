@@ -55,21 +55,21 @@ if (data.ok === false) {
 }
 const r = data.result || {};
 const wt = r.worktree || r.item || r;
-const explicitTerm = r.terminal || wt.terminal || null;
+const explicitTerm = r.terminal || null;
 const repo = r.repo || r.repository || r;
 function scalar(v) {
   return (typeof v === "string" || typeof v === "number") ? String(v) : "";
 }
-function handle(obj, allowRootId) {
+function handle(obj) {
   if (!obj) return "";
   if (typeof obj === "string" || typeof obj === "number") return String(obj);
-  return scalar(obj.handle) || (allowRootId ? scalar(obj.id) : "") || "";
+  return scalar(obj.handle) || "";
 }
 let v = "";
 if (field === "worktree-id") v = wt.id || wt.worktreeId || r.worktreeId || "";
 if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path || "";
-if (field === "terminal-handle") v = handle(explicitTerm || r, true) || "";
-if (field === "worktree-terminal-handle") v = handle(explicitTerm, true) || "";
+if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
+if (field === "worktree-terminal-handle") v = handle(explicitTerm) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));
