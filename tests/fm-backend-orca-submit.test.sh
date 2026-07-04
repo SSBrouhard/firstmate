@@ -77,6 +77,23 @@ test_orca_submit_verifies_unboxed_empty_prompt_after_enter() {
   pass "fm_backend_orca_send_text_submit: verifies unboxed empty prompt after Enter"
 }
 
+test_orca_submit_ignores_historical_unboxed_prompt() {
+  local out log_text enter_count
+  orca_case historical-unboxed-prompt
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/1.out"
+  printf '{"ok":true,"result":{"send":{"accepted":true}}}\n' > "$RESP/2.out"
+  printf '{"ok":true,"result":{"terminal":{"tail":["❯ hello captain","working"]}}}\n' > "$RESP/3.out"
+
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_orca_send_text_submit term-123 "hello captain" 3 0.01 0.01' "$ROOT" )
+
+  [ "$out" = empty ] || fail "historical Orca prompt should not look pending, got '$out'"
+  log_text=$(cat "$LOG")
+  enter_count=$(printf '%s\n' "$log_text" | grep -c $'orca\x1fterminal\x1fsend\x1f--terminal\x1fterm-123\x1f--text\x1f\x1f--enter\x1f--json')
+  [ "$enter_count" -eq 1 ] || fail "historical prompt should not trigger retry Enter, got $enter_count"
+  pass "fm_backend_orca_send_text_submit: ignores historical unboxed prompts"
+}
+
 test_orca_composer_state_popup_placeholder_fill_is_pending() {
   local out
   orca_case popup-placeholder
@@ -115,5 +132,6 @@ test_orca_send_text_reports_swallowed_codex_skill_enter() {
 
 test_orca_submit_verifies_empty_composer_after_enter
 test_orca_submit_verifies_unboxed_empty_prompt_after_enter
+test_orca_submit_ignores_historical_unboxed_prompt
 test_orca_composer_state_popup_placeholder_fill_is_pending
 test_orca_send_text_reports_swallowed_codex_skill_enter
