@@ -1,7 +1,7 @@
 # Codex App backend contract
 
-Status: blocked for Firstmate as a selectable shell backend because Codex Desktop does not currently expose a supported shell-callable API or CLI bridge to the verified host tools.
-The Codex Desktop host-tool loop works, including status-file writes.
+Status: blocked for Firstmate as a selectable shell backend.
+The Codex Desktop host-tool loop works, including status-file writes, but Firstmate does not yet have a supported shell-callable bridge to those host tools.
 
 This document replaces the earlier passive visible-thread ledger shape.
 A manual ledger is not a backend.
@@ -148,6 +148,19 @@ read_thread after archive:
   thread.cwd=<CODEX_DESKTOP_WORKTREE>
   transcript still included the initial and follow-up completed turns.
 ```
+
+Separate 2026-07-06 shell-harness rerun attempt evidence: this harness did not expose callable `create_thread`, `read_thread`, `send_message_to_thread`, or `archive` host tools, so it could not perform an independent same-day rerun from shell.
+Targeted tool discovery for those names surfaced GitHub and Gmail connector tools only, not Codex Desktop thread host tools.
+The requested shell-harness smoke output files were absent:
+
+```text
+$ ls -l state/codex-app-host-smoke-20260706.status data/codex-app-host-smoke-20260706/report.md
+ls: data/codex-app-host-smoke-20260706/report.md: No such file or directory
+ls: state/codex-app-host-smoke-20260706.status: No such file or directory
+```
+
+Prior 2026-07-03 host-tool smoke evidence is preserved as historical confirmation.
+That run used thread id `019f2947-f75e-78b2-aebc-f57ef1b5b399`, wrote `state/codex-app-host-smoke-j3.status` and `data/codex-app-host-smoke-j3/report.md`, appended `working: host thread wrote status` and `done: follow-up delivered`, and archive/read-after-archive still returned the transcript with the thread no longer loaded.
 
 Result: a Desktop-owned Codex thread can write Firstmate status files when the prompt gives it the absolute status path and the Desktop permission context can write that checkout.
 The return channel is real at the Codex Desktop host-tool layer.
