@@ -860,6 +860,137 @@ test_escalate_serializes_concurrent_apply() {
   pass "fm-stuck-classify.sh: serializes concurrent escalation apply"
 }
 
+test_escalate_acquires_dual_lifecycle_locks_before_meta_read() {
+  # Holding either prior or follow-on spawn lifecycle lock must refuse reserve
+  # before metadata mutation, proving both IDs are locked.
+  write_meta dual1
+  log_escalate_decision dual1
+  local err rc holder attempt
+  (
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$STATE_DIR/.spawn-dual1.lock" || exit 1
+    : >"$TMP_ROOT/dual1-prior-ready"
+    while [ ! -e "$TMP_ROOT/dual1-prior-release" ]; do sleep 0.05; done
+    fm_lock_release "$STATE_DIR/.spawn-dual1.lock"
+  ) & holder=$!
+  attempt=0
+  while [ ! -e "$TMP_ROOT/dual1-prior-ready" ] && [ "$attempt" -lt 100 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  [ -e "$TMP_ROOT/dual1-prior-ready" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "prior lifecycle lock holder did not become ready"
+  }
+  err=$(run_sc escalate dual1 --target-profile claude/claude-sonnet-5/high \
+    --new-id dual1-new --reserve 2>&1); rc=$?
+  : >"$TMP_ROOT/dual1-prior-release"
+  wait "$holder"
+  expect_code 2 "$rc" "prior lifecycle lock must refuse reserve"
+  assert_contains "$err" "lifecycle is busy" "prior lock refusal should explain"
+  [ ! -e "$STATE_DIR/.dual1.stuck-escalate.pending" ] \
+    || fail "prior-locked reserve wrote a pending record"
+
+  write_meta dual2
+  log_escalate_decision dual2
+  (
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$STATE_DIR/.spawn-dual2-new.lock" || exit 1
+    : >"$TMP_ROOT/dual2-new-ready"
+    while [ ! -e "$TMP_ROOT/dual2-new-release" ]; do sleep 0.05; done
+    fm_lock_release "$STATE_DIR/.spawn-dual2-new.lock"
+  ) & holder=$!
+  attempt=0
+  while [ ! -e "$TMP_ROOT/dual2-new-ready" ] && [ "$attempt" -lt 100 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  [ -e "$TMP_ROOT/dual2-new-ready" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "follow-on lifecycle lock holder did not become ready"
+  }
+  err=$(run_sc escalate dual2 --target-profile claude/claude-sonnet-5/high \
+    --new-id dual2-new --reserve 2>&1); rc=$?
+  : >"$TMP_ROOT/dual2-new-release"
+  wait "$holder"
+  expect_code 2 "$rc" "follow-on lifecycle lock must refuse reserve"
+  assert_contains "$err" "lifecycle is busy" "follow-on lock refusal should explain"
+  [ ! -e "$STATE_DIR/.dual2.stuck-escalate.pending" ] \
+    || fail "follow-on-locked reserve wrote a pending record"
+  pass "fm-stuck-classify.sh: dual lifecycle locks serialize reserve with both task IDs"
+}
+
+test_escalate_reserve_linearizes_under_decision_log_lock() {
+  # Holding the classify decision-log lock must block reserve from binding a
+  # decision and publishing reservation records.
+  write_meta dlock1
+  log_escalate_decision dlock1
+  local err rc holder attempt lock_path
+  lock_path="$DECISION_LOG_PATH.lock"
+  (
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock_path" || exit 1
+    : >"$TMP_ROOT/dlock1-ready"
+    while [ ! -e "$TMP_ROOT/dlock1-release" ]; do sleep 0.05; done
+    fm_lock_release "$lock_path"
+  ) & holder=$!
+  attempt=0
+  while [ ! -e "$TMP_ROOT/dlock1-ready" ] && [ "$attempt" -lt 100 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  [ -e "$TMP_ROOT/dlock1-ready" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "decision-log lock holder did not become ready"
+  }
+  # Short acquire wait so the test fails closed quickly under contention.
+  err=$(FM_LOCK_ACQUIRE_WAIT_TIMEOUT=1 run_sc escalate dlock1 \
+    --target-profile claude/claude-sonnet-5/high \
+    --new-id dlock1-new --reserve 2>&1); rc=$?
+  : >"$TMP_ROOT/dlock1-release"
+  wait "$holder"
+  expect_code 2 "$rc" "decision-log lock contention must refuse reserve"
+  assert_contains "$err" "decision log lock" "decision-log contention should explain"
+  [ ! -e "$STATE_DIR/.dlock1.stuck-escalate.pending" ] \
+    || fail "decision-log-contended reserve wrote a pending record"
+  [ ! -e "$STATE_DIR/.dlock1-new.stuck-escalation-reservation" ] \
+    || fail "decision-log-contended reserve wrote a claim"
+  pass "fm-stuck-classify.sh: reserve linearizes decision selection under decision-log lock"
+}
+
+test_escalate_commit_idempotent_after_journal_cleared() {
+  # Markers + outcome durable and journal already cleared must succeed on retry
+  # rather than refuse as already_escalated / missing reservation.
+  write_meta settle1
+  log_escalate_decision settle1
+  local out rc reserve reservation note
+  note="same test red after 2 rounds"
+  reserve=$(run_sc escalate settle1 --target-profile claude/claude-sonnet-5/high \
+    --new-id settle1-new --reserve --note "$note")
+  reservation=$(printf '%s\n' "$reserve" | awk -F= '$1 == "reservation_id" { print $2 }')
+  write_strong_meta settle1-new "$reservation"
+  out=$(run_sc escalate settle1 --target-profile claude/claude-sonnet-5/high \
+    --new-id settle1-new --commit --note "$note"); rc=$?
+  expect_code 0 "$rc" "initial commit should succeed"
+  assert_contains "$out" "verdict=escalated" "initial commit verdict"
+  [ ! -e "$STATE_DIR/.settle1.stuck-escalate.pending" ] || fail "pending remained after commit"
+  [ ! -e "$STATE_DIR/.settle1-new.stuck-escalation-reservation" ] || fail "claim remained after commit"
+
+  out=$(run_sc escalate settle1 --target-profile claude/claude-sonnet-5/high \
+    --new-id settle1-new --commit --note "$note"); rc=$?
+  expect_code 0 "$rc" "settled commit retry must be idempotent success"
+  assert_contains "$out" "verdict=escalated" "settled retry should report escalated"
+  [ "$(grep -c 'escalated_from=' "$STATE_DIR/settle1.meta")" -eq 1 ] \
+    || fail "idempotent retry must not double-write prior marker"
+  pass "fm-stuck-classify.sh: settled commit is idempotent when journal already cleared"
+}
+
 test_escalate_refuses_missing_target() {
   write_meta cheap3
   local err rc
@@ -939,6 +1070,9 @@ test_escalate_claims_new_id_globally
 test_escalate_recovers_pending_transaction
 test_escalate_revalidates_pending_target
 test_escalate_serializes_concurrent_apply
+test_escalate_acquires_dual_lifecycle_locks_before_meta_read
+test_escalate_reserve_linearizes_under_decision_log_lock
+test_escalate_commit_idempotent_after_journal_cleared
 test_escalate_refuses_missing_target
 test_n_env_override
 

@@ -1728,10 +1728,9 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
-spawn_mark_launch_complete || {
-  echo "error: could not persist launch completion for task $ID" >&2
-  exit 1
-}
+# Retain launch_complete_generation only after harness-specific launch gates
+# succeed. For Kimi that includes readiness and brief-pointer delivery; a failed
+# launch must not be committable as an escalation success.
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "kimi did not show a verified ready signal before brief delivery"
@@ -1756,6 +1755,10 @@ if [ "$HARNESS" = kimi ]; then
     exit 1
   fi
 fi
+spawn_mark_launch_complete || {
+  echo "error: could not persist launch completion for task $ID" >&2
+  exit 1
+}
 if [ "$KIND" = secondmate ]; then
   if ! fm_config_reread_discard_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
     if fm_config_reread_quarantine_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
