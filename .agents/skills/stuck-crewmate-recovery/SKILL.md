@@ -51,5 +51,5 @@ Escalate in order:
 ## Capability-stuck measurement
 
 When the same acceptance failure survives the real fix threshold after this recovery procedure is exhausted, use `fm-dispatch-outcome.sh suggest` as historical context and pass the durable evidence to `fm-stuck-classify.sh classify`.
-Only an `escalate` verdict proceeds: use `resolve-stronger`, reserve the returned target before the normal spawn, then commit the linkage after the follow-on task record matches that target.
+Only a durably logged `escalate` verdict proceeds: use `resolve-stronger`, reserve the returned target, pass the returned `reservation_id` to the normal spawn as `--escalation-reservation`, then commit the linkage after the follow-on task record matches that target and reservation.
 The full evidence, strength, transaction, and anti-thrash contract is owned by `docs/dispatch-outcome-memory.md` and the scripts' help output.

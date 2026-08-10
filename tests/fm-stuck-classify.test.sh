@@ -49,6 +49,7 @@ write_meta() {
     printf 'mode=no-mistakes\n'
     printf 'model=gpt-5.5\n'
     printf 'effort=medium\n'
+    printf 'spawn_generation=gen-%s\n' "$id"
     # optional extra lines
     for line in "$@"; do
       printf '%s\n' "$line"
@@ -198,11 +199,21 @@ test_classify_escalates_capability_stuck() {
   local out
   out=$(run_sc classify --endpoint-alive yes --crew-state working \
     --failure-class capability --same-failure yes --fix-attempts 2 \
-    --recovery-exhausted yes --n 2)
+    --recovery-exhausted yes --already-escalated no --n 2)
   assert_contains "$out" "verdict=escalate" "capability stuck should escalate"
   assert_contains "$out" "reason=capability_stuck" "capability_stuck reason"
   assert_contains "$out" "fix_attempts=2" "metrics fix_attempts"
   pass "fm-stuck-classify.sh: escalates capability stuck at N=2"
+}
+
+test_classify_uncertain_without_escalation_history() {
+  local out
+  out=$(run_sc classify --endpoint-alive yes --crew-state working \
+    --failure-class capability --same-failure yes --fix-attempts 2 \
+    --recovery-exhausted yes --n 2)
+  assert_contains "$out" "verdict=uncertain" "missing anti-thrash evidence must abstain"
+  assert_contains "$out" "reason=missing_escalation_history" "missing anti-thrash reason"
+  pass "fm-stuck-classify.sh: missing anti-thrash evidence is uncertain"
 }
 
 test_classify_json_shape() {
@@ -226,7 +237,8 @@ test_classify_appends_decision_schema() {
   line=$(tail -n 1 "$log")
   printf '%s\n' "$line" | jq -e '
     (.timestamp | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
-    .id == "decision1" and .endpoint_alive == "yes" and .crew_state == "working" and
+    (.decision_id | type) == "string" and (.decision_id | length) > 0 and
+    .id == "decision1" and .generation == "" and .endpoint_alive == "yes" and .crew_state == "working" and
     .failure_class == "capability" and .same_failure == "yes" and .fix_attempts == 3 and
     .n_threshold == 2 and .recovery_exhausted == "yes" and .self_report_only == "no" and
     .already_escalated == "no" and .verdict == "escalate" and
@@ -287,6 +299,25 @@ test_classify_log_recovers_pending_after_missing_final_newline() {
   pass "fm-stuck-classify.sh: pending recovery accepts a no-newline prefix"
 }
 
+test_classify_log_replays_partial_pending_payload() {
+  local log="$TMP_ROOT/classify-partial-pending.jsonl" payload dev ino start
+  printf '%s\n' '{"sentinel":"prior"}' >"$log"
+  if [ "$(uname)" = Darwin ]; then
+    read -r dev ino <<<"$(stat -f '%d %i' "$log")"
+  else
+    read -r dev ino <<<"$(stat -c '%d %i' "$log")"
+  fi
+  start=$(wc -c <"$log" | tr -d ' ')
+  payload=$'{"sentinel":"replayed"}\n'
+  printf '%s\n%s\n%s\n%s' "$dev" "$ino" "$start" "$payload" >"$log.pending"
+  printf '%s' "${payload:0:9}" >>"$log"
+  TEST_DECISION_LOG="$log" run_sc classify --endpoint-alive no >/dev/null
+  jq -s -e 'length == 3 and .[0].sentinel == "prior" and .[1].sentinel == "replayed" and .[2].reason == "endpoint_not_alive"' \
+    "$log" >/dev/null || fail "partial pending decision payload was not replayed"
+  [ ! -e "$log.pending" ] || fail "partial pending replay left its journal"
+  pass "fm-stuck-classify.sh: partial pending decisions replay before append"
+}
+
 test_classify_log_rejects_malformed_existing_stream() {
   local log="$TMP_ROOT/classify-malformed-stream.jsonl" out
   printf '%s\n' '{"sentinel":"prior"}' 'not-json' >"$log"
@@ -326,7 +357,7 @@ test_classify_gold_cases_append_unique_records() {
     --crew-state unknown >/dev/null
   TEST_DECISION_LOG="$log" run_sc classify --id gold-escalate --endpoint-alive yes \
     --crew-state working --failure-class capability --same-failure yes --fix-attempts 2 \
-    --recovery-exhausted yes >/dev/null
+    --recovery-exhausted yes --already-escalated no >/dev/null
   TEST_DECISION_LOG="$log" run_sc classify --id gold-json --json --endpoint-alive no >/dev/null
   jq -s -e 'length == 4 and (map(.id) | unique | length == 4) and
     ((map(.id) | sort) == ["gold-escalate", "gold-json", "gold-refuse", "gold-uncertain"])' \
@@ -602,6 +633,15 @@ test_resolve_stronger_accepts_default_only_dispatch() {
   pass "fm-stuck-classify.sh: canonical validator accepts default-only dispatch"
 }
 
+test_resolve_stronger_refuses_out_of_range_strength() {
+  local dispatch="$TMP_ROOT/out-of-range-strength.json" err rc
+  printf '%s\n' '{"rules":[{"when":"strong","use":{"harness":"claude","strength":2147483648}}],"default":{"harness":"codex","strength":1}}' >"$dispatch"
+  err=$(run_sc resolve-stronger --from-profile codex --dispatch "$dispatch" 2>&1); rc=$?
+  expect_code 2 "$rc" "out-of-range strength must fail validation"
+  assert_contains "$err" "invalid dispatch profiles" "strength range refusal should be explicit"
+  pass "fm-stuck-classify.sh: public strength stays in portable integer range"
+}
+
 test_resolve_stronger_refuses_missing_dispatch() {
   local err rc
   err=$(run_sc resolve-stronger --from-profile codex/gpt-5.5/medium \
@@ -612,7 +652,7 @@ test_resolve_stronger_refuses_missing_dispatch() {
 }
 
 write_strong_meta() {
-  local id=$1 harness=${2:-claude} model=${3:-claude-sonnet-5} effort=${4:-high}
+  local id=$1 reservation=$2 harness=${3:-claude} model=${4:-claude-sonnet-5} effort=${5:-high}
   cat >"$STATE_DIR/$id.meta" <<EOF
 window=fm-$id
 worktree=/tmp/wt-$id
@@ -622,12 +662,21 @@ kind=ship
 mode=no-mistakes
 model=$model
 effort=$effort
+spawn_generation=gen-$id
+escalation_reservation=$reservation
 EOF
+}
+
+log_escalate_decision() {
+  local id=$1
+  run_sc classify --id "$id" --endpoint-alive yes --crew-state working \
+    --failure-class capability --same-failure yes --fix-attempts 2 \
+    --recovery-exhausted yes --n 2 >/dev/null
 }
 
 test_escalate_reserves_then_commits_linkage() {
   write_meta cheap1
-  local out rc
+  local out rc reservation
   out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
     --note "same test red after 2 rounds" --dry-run); rc=$?
   expect_code 0 "$rc" "dry-run escalate should succeed"
@@ -638,6 +687,7 @@ test_escalate_reserves_then_commits_linkage() {
   [ ! -f "$LOG_PATH" ] || [ ! -s "$LOG_PATH" ] \
     || fail "dry-run must not write outcome log"
 
+  log_escalate_decision cheap1
   out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
     --new-id strong1 --reserve --note "same test red after 2 rounds"); rc=$?
   expect_code 0 "$rc" "reserve should succeed before follow-on spawn"
@@ -647,7 +697,8 @@ test_escalate_reserves_then_commits_linkage() {
     "reserve must not mark prior before follow-on spawn"
   [ ! -f "$LOG_PATH" ] || [ ! -s "$LOG_PATH" ] || fail "reserve must not record an ending"
 
-  write_strong_meta strong1
+  reservation=$(printf '%s\n' "$out" | awk -F= '$1 == "reservation_id" { print $2 }')
+  write_strong_meta strong1 "$reservation"
   out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
     --new-id strong1 --commit); rc=$?
   expect_code 0 "$rc" "commit should succeed after matching follow-on spawn"
@@ -668,10 +719,12 @@ test_escalate_reserves_then_commits_linkage() {
 
 test_escalate_rejects_mismatched_follow_on_profile() {
   write_meta cheap2
-  run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high \
-    --new-id strong2 --reserve >/dev/null
-  write_strong_meta strong2 codex gpt-5.5 high
-  local err rc
+  log_escalate_decision cheap2
+  local err rc reserve reservation
+  reserve=$(run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high \
+    --new-id strong2 --reserve)
+  reservation=$(printf '%s\n' "$reserve" | awk -F= '$1 == "reservation_id" { print $2 }')
+  write_strong_meta strong2 "$reservation" codex gpt-5.5 high
   err=$(run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high \
     --new-id strong2 --commit 2>&1); rc=$?
   expect_code 2 "$rc" "mismatched follow-on profile must refuse"
@@ -683,6 +736,7 @@ test_escalate_rejects_mismatched_follow_on_profile() {
 
 test_escalate_refuses_arbitrary_target() {
   write_meta cheap4
+  log_escalate_decision cheap4
   local err rc
   err=$(run_sc escalate cheap4 --target-profile grok/grok-4.5/high \
     --new-id strong4 --reserve 2>&1); rc=$?
@@ -708,14 +762,42 @@ test_escalate_requires_reservation_before_commit() {
   pass "fm-stuck-classify.sh: commit requires a prior reservation"
 }
 
+test_escalate_requires_durable_escalate_decision() {
+  write_meta unbound1
+  local err rc
+  err=$(run_sc escalate unbound1 --target-profile claude/claude-sonnet-5/high \
+    --new-id unbound1-new --reserve 2>&1); rc=$?
+  expect_code 2 "$rc" "reservation without a classify decision must refuse"
+  assert_contains "$err" "latest durable classify decision" "decision binding refusal should explain"
+  [ ! -e "$STATE_DIR/.unbound1.stuck-escalate.pending" ] || fail "unbound reserve wrote a pending record"
+  pass "fm-stuck-classify.sh: reserve requires a durable escalate decision"
+}
+
+test_escalate_claims_new_id_globally() {
+  write_meta claim1
+  write_meta claim2
+  log_escalate_decision claim1
+  log_escalate_decision claim2
+  run_sc escalate claim1 --target-profile claude/claude-sonnet-5/high \
+    --new-id globally-claimed --reserve >/dev/null
+  local err rc
+  err=$(run_sc escalate claim2 --target-profile claude/claude-sonnet-5/high \
+    --new-id globally-claimed --reserve 2>&1); rc=$?
+  expect_code 2 "$rc" "a second prior task must not claim the same follow-on id"
+  assert_contains "$err" "different escalation transaction" "global new-id claim refusal should explain"
+  pass "fm-stuck-classify.sh: follow-on ids bind to one escalation transaction"
+}
+
 test_escalate_recovers_pending_transaction() {
   write_meta atomic1
-  local failing="$TMP_ROOT/failing-outcome.sh" err rc out
+  log_escalate_decision atomic1
+  local failing="$TMP_ROOT/failing-outcome.sh" err rc out reserve reservation
   printf '#!/usr/bin/env bash\nexit 1\n' >"$failing"
   chmod +x "$failing"
-  run_sc escalate atomic1 --target-profile claude/claude-sonnet-5/high \
-    --new-id atomic1-new --reserve >/dev/null
-  write_strong_meta atomic1-new
+  reserve=$(run_sc escalate atomic1 --target-profile claude/claude-sonnet-5/high \
+    --new-id atomic1-new --reserve)
+  reservation=$(printf '%s\n' "$reserve" | awk -F= '$1 == "reservation_id" { print $2 }')
+  write_strong_meta atomic1-new "$reservation"
   err=$(TEST_OUTCOME_BIN="$failing" run_sc escalate atomic1 \
     --target-profile claude/claude-sonnet-5/high --new-id atomic1-new --commit 2>&1); rc=$?
   expect_code 2 "$rc" "failed outcome should leave a recoverable transaction"
@@ -735,6 +817,7 @@ test_escalate_revalidates_pending_target() {
   local dispatch="$TMP_ROOT/pending-dispatch.json" err rc
   printf '%s\n' '{"rules":[{"when":"complex ship","use":{"harness":"claude","model":"claude-sonnet-5","effort":"high","strength":20}}],"default":{"harness":"codex","model":"gpt-5.5","effort":"medium","strength":10}}' >"$dispatch"
   write_meta atomic3
+  log_escalate_decision atomic3
   run_sc escalate atomic3 --target-profile claude/claude-sonnet-5/high \
     --new-id atomic3-new --reserve --dispatch "$dispatch" >/dev/null
 
@@ -749,10 +832,12 @@ test_escalate_revalidates_pending_target() {
 
 test_escalate_serializes_concurrent_apply() {
   write_meta race1
-  run_sc escalate race1 --target-profile claude/claude-sonnet-5/high \
-    --new-id race1-new --reserve >/dev/null
-  write_strong_meta race1-new
-  local slow rc1 rc2 p1 p2
+  log_escalate_decision race1
+  local slow rc1 rc2 p1 p2 reserve reservation
+  reserve=$(run_sc escalate race1 --target-profile claude/claude-sonnet-5/high \
+    --new-id race1-new --reserve)
+  reservation=$(printf '%s\n' "$reserve" | awk -F= '$1 == "reservation_id" { print $2 }')
+  write_strong_meta race1-new "$reservation"
   slow="$TMP_ROOT/slow-outcome.sh"
   printf '#!/usr/bin/env bash\nsleep 0.2\nexec %q "$@"\n' "$OUTCOME" >"$slow"
   chmod +x "$slow"
@@ -813,11 +898,13 @@ test_classify_uncertain_unknown_crew_state
 test_classify_uncertain_missing_endpoint_evidence
 test_classify_refuses_external_wait
 test_classify_escalates_capability_stuck
+test_classify_uncertain_without_escalation_history
 test_classify_json_shape
 test_classify_appends_decision_schema
 test_classify_log_never_rewrites_prior_lines
 test_classify_log_repairs_missing_final_newline
 test_classify_log_recovers_pending_after_missing_final_newline
+test_classify_log_replays_partial_pending_payload
 test_classify_log_rejects_malformed_existing_stream
 test_classify_log_serializes_concurrent_appends
 test_classify_gold_cases_append_unique_records
@@ -840,11 +927,14 @@ test_resolve_stronger_from_standing_fixture
 test_resolve_stronger_uses_explicit_strength_only
 test_resolve_stronger_preserves_optional_and_slash_profiles
 test_resolve_stronger_accepts_default_only_dispatch
+test_resolve_stronger_refuses_out_of_range_strength
 test_resolve_stronger_refuses_missing_dispatch
 test_escalate_reserves_then_commits_linkage
 test_escalate_rejects_mismatched_follow_on_profile
 test_escalate_refuses_arbitrary_target
 test_escalate_requires_reservation_before_commit
+test_escalate_requires_durable_escalate_decision
+test_escalate_claims_new_id_globally
 test_escalate_recovers_pending_transaction
 test_escalate_revalidates_pending_target
 test_escalate_serializes_concurrent_apply

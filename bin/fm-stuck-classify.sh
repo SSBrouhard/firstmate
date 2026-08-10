@@ -29,8 +29,9 @@
 #         1) refuse when prior meta already has escalated_from= (anti-lazy /
 #            thrash cap: no second auto-escalate on the same attempt)
 #         2) verify target_profile is the resolver's stronger standing profile
-#         3) reserve the linkage before spawning the follow-on worker
-#         4) commit only after follow-on metadata matches the target profile
+#         3) reserve the linkage after a durable escalate decision
+#         4) spawn with the returned reservation_id and commit only after
+#            follow-on metadata matches the reservation and target profile
 #         5) append linkage and record the prior outcome as escalated
 #   help | -h | --help
 #       Print this header.
@@ -65,7 +66,8 @@
 #   dead_endpoint, endpoint_not_alive, parked_operator, validation_advancing,
 #   declared_pause, infra, external_wait, already_escalated, below_threshold,
 #   self_report_only, ambiguous, unknown_crew_state, not_same_failure,
-#   recovery_not_exhausted, terminal_state, missing_endpoint_evidence
+#   recovery_not_exhausted, terminal_state, missing_endpoint_evidence,
+#   missing_escalation_history
 #
 # Safety:
 #   - No network.
@@ -476,20 +478,29 @@ if (!sysopen($pending, $pending_path, O_RDWR | O_NOFOLLOW)) {
     defined $pending_prefix or exit 1;
     if ($size >= $pending_end && substr($pending_prefix, 0, length($pending_payload)) eq $pending_payload) {
       unlink($pending_path) or exit 1;
+      fsync_handle($parent_dirs->[-1]) or exit 1;
       close($pending) or exit 1;
       undef $pending;
       undef $pending_payload;
     } elsif ($size >= $pending_start && $size < $pending_end &&
         $pending_prefix eq substr($pending_payload, 0, $pending_prefix_length)) {
       truncate($file, $pending_start) or exit 1;
+      seek($file, 0, 2) or exit 1;
+      write_all($file, $pending_payload) or exit 1;
       fsync_handle($file) or exit 1;
-      $size = $pending_start;
+      $size = $pending_end;
       unlink($pending_path) or exit 1;
+      fsync_handle($parent_dirs->[-1]) or exit 1;
       close($pending) or exit 1;
       undef $pending;
       undef $pending_payload;
     } elsif ($size == $pending_start) {
+      seek($file, 0, 2) or exit 1;
+      write_all($file, $pending_payload) or exit 1;
+      fsync_handle($file) or exit 1;
+      $size = $pending_end;
       unlink($pending_path) or exit 1;
+      fsync_handle($parent_dirs->[-1]) or exit 1;
       close($pending) or exit 1;
       undef $pending;
       undef $pending_payload;
@@ -964,7 +975,7 @@ cmd_classify() {
   fix_attempts=0
   recovery_exhausted=no
   self_report_only=no
-  already_escalated=''
+  already_escalated=unknown
   n_threshold=$DEFAULT_N
 
   while [ "$#" -gt 0 ]; do
@@ -1102,17 +1113,18 @@ cmd_classify() {
 
   if [ -n "$id" ]; then
     fm_task_id_path_safe "$id" || die "invalid task id '$id'"
-    if [ -z "$already_escalated" ]; then
+    if [ "$already_escalated" = unknown ]; then
       local ef
-      ef=$(meta_value "$STATE/$id.meta" escalated_from)
-      if [ -n "$ef" ]; then
-        already_escalated=yes
-      else
-        already_escalated=no
+      if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
+        ef=$(meta_value "$STATE/$id.meta" escalated_from)
+        if [ -n "$ef" ]; then
+          already_escalated=yes
+        else
+          already_escalated=no
+        fi
       fi
     fi
   fi
-  [ -n "$already_escalated" ] || already_escalated=no
 
   local verdict=refuse reason='' detail=''
 
@@ -1191,13 +1203,17 @@ cmd_classify() {
     verdict=refuse
     reason=recovery_not_exhausted
     detail='stuck-worker recovery not exhausted on the same product failure'
+  elif [ "$already_escalated" = unknown ]; then
+    verdict=uncertain
+    reason=missing_escalation_history
+    detail='anti-thrash evidence is missing; fail safe to operator, not silent escalate'
   else
     verdict=escalate
     reason=capability_stuck
     detail="alive + capability + same failure after >=$n_threshold attempts + recovery exhausted"
   fi
 
-  local timestamp decision_json output_json
+  local timestamp decision_id decision_generation decision_json output_json
   printf -v output_json '{"verdict":"%s","reason":"%s","detail":"%s","endpoint_alive":"%s","crew_state":"%s","failure_class":"%s","same_failure":"%s","fix_attempts":%s,"n_threshold":%s,"recovery_exhausted":"%s","self_report_only":"%s","already_escalated":"%s","id":"%s"}' \
     "$(json_escape "$verdict")" \
     "$(json_escape "$reason")" \
@@ -1215,9 +1231,16 @@ cmd_classify() {
   if [ "$DECISION_LOG" != off ]; then
     if timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) \
       && [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
-      printf -v decision_json '{"timestamp":"%s","id":"%s","endpoint_alive":"%s","crew_state":"%s","failure_class":"%s","same_failure":"%s","fix_attempts":%s,"n_threshold":%s,"recovery_exhausted":"%s","self_report_only":"%s","already_escalated":"%s","verdict":"%s","reason":"%s","detail":"%s"}' \
+      decision_id="${timestamp}.${BASHPID:-$$}.${RANDOM:-0}"
+      decision_generation=''
+      if [ -n "$id" ] && [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
+        decision_generation=$(meta_value "$STATE/$id.meta" spawn_generation)
+      fi
+      printf -v decision_json '{"timestamp":"%s","decision_id":"%s","id":"%s","generation":"%s","endpoint_alive":"%s","crew_state":"%s","failure_class":"%s","same_failure":"%s","fix_attempts":%s,"n_threshold":%s,"recovery_exhausted":"%s","self_report_only":"%s","already_escalated":"%s","verdict":"%s","reason":"%s","detail":"%s"}' \
         "$(json_escape "$timestamp")" \
+        "$(json_escape "$decision_id")" \
         "$(json_escape "$id")" \
+        "$(json_escape "$decision_generation")" \
         "$(json_escape "$endpoint_alive")" \
         "$(json_escape "$crew_state")" \
         "$(json_escape "$failure_class")" \
@@ -1404,34 +1427,140 @@ cmd_resolve_stronger() {
   return 0
 }
 
+sync_regular_file() {
+  local path=$1
+  perl - "$path" <<'PERL'
+use strict;
+use warnings;
+use Fcntl qw(:DEFAULT);
+use File::Basename qw(dirname);
+use IO::Handle ();
+my ($path) = @ARGV;
+sysopen(my $file, $path, O_RDWR | O_NOFOLLOW) or exit 1;
+my @path_stat = lstat($path) or exit 1;
+my @file_stat = stat($file) or exit 1;
+-f $file && $path_stat[0] == $file_stat[0] && $path_stat[1] == $file_stat[1] && $file_stat[3] == 1 or exit 1;
+defined $file->sync() or exit 1;
+close($file) or exit 1;
+sysopen(my $parent, dirname($path), O_RDONLY | O_DIRECTORY) or exit 1;
+defined $parent->sync() or exit 1;
+PERL
+}
+
 ensure_meta_field() {
   local meta=$1 key=$2 value=$3 existing
   [ -f "$meta" ] || return 1
   existing=$(meta_value "$meta" "$key")
   if [ -n "$existing" ]; then
-    [ "$existing" = "$value" ]
-    return
+    [ "$existing" = "$value" ] || return 1
+    sync_regular_file "$meta"
+    return $?
   fi
-  printf '%s=%s\n' "$key" "$value" >>"$meta"
+  command -v perl >/dev/null 2>&1 || return 1
+  perl - "$meta" "$key=$value" <<'PERL'
+use strict;
+use warnings;
+use Fcntl qw(:DEFAULT);
+use File::Basename qw(dirname);
+use IO::Handle ();
+my ($path, $line) = @ARGV;
+sysopen(my $file, $path, O_WRONLY | O_APPEND | O_NOFOLLOW) or exit 1;
+my @path_stat = lstat($path) or exit 1;
+my @file_stat = stat($file) or exit 1;
+-f $file && $path_stat[0] == $file_stat[0] && $path_stat[1] == $file_stat[1] && $file_stat[3] == 1 or exit 1;
+my $payload = "$line\n";
+my $offset = 0;
+while ($offset < length($payload)) {
+  my $count = syswrite($file, $payload, length($payload) - $offset, $offset);
+  defined $count && $count > 0 or exit 1;
+  $offset += $count;
+}
+defined $file->sync() or exit 1;
+close($file) or exit 1;
+sysopen(my $parent, dirname($path), O_RDONLY | O_DIRECTORY) or exit 1;
+defined $parent->sync() or exit 1;
+PERL
 }
 
 write_pending_escalation() {
-  local path=$1 prior_id=$2 from_profile=$3 target_profile=$4 new_id=$5 note=$6 tmp
+  local path=$1 prior_id=$2 from_profile=$3 target_profile=$4 new_id=$5 note=$6 transaction_id=$7 decision_id=$8 generation=$9 tmp
   [ ! -e "$path" ] && [ ! -L "$path" ] || return 1
   tmp=$(mktemp "${path}.tmp.XXXXXX") || return 1
-  if ! printf '{"prior_id":"%s","from_profile":"%s","target_profile":"%s","new_id":"%s","note":"%s"}\n' \
+  if ! printf '{"prior_id":"%s","from_profile":"%s","target_profile":"%s","new_id":"%s","note":"%s","transaction_id":"%s","decision_id":"%s","generation":"%s"}\n' \
     "$(json_escape "$prior_id")" \
     "$(json_escape "$(profile_display "$from_profile")")" \
     "$(json_escape "$(profile_display "$target_profile")")" \
     "$(json_escape "$new_id")" \
-    "$(json_escape "$note")" >"$tmp"; then
+    "$(json_escape "$note")" \
+    "$(json_escape "$transaction_id")" \
+    "$(json_escape "$decision_id")" \
+    "$(json_escape "$generation")" >"$tmp"; then
     rm -f "$tmp"
     return 1
   fi
+  perl -MIO::Handle -e 'open my $f, "+<", $ARGV[0] or exit 1; defined $f->sync or exit 1' "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
   if ! mv -f "$tmp" "$path"; then
     rm -f "$tmp"
     return 1
   fi
+  sync_state_directory
+}
+
+write_reservation_claim() {
+  local path=$1 transaction_id=$2 prior_id=$3 new_id=$4 target_profile=$5 decision_id=$6 generation=$7 tmp
+  [ ! -e "$path" ] && [ ! -L "$path" ] || return 1
+  tmp=$(mktemp "${path}.tmp.XXXXXX") || return 1
+  if ! printf 'transaction_id=%s\nprior_id=%s\nnew_id=%s\ntarget_profile=%s\ndecision_id=%s\ngeneration=%s\n' \
+    "$transaction_id" "$prior_id" "$new_id" "$(profile_display "$target_profile")" "$decision_id" "$generation" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  perl -MIO::Handle -e 'open my $f, "+<", $ARGV[0] or exit 1; defined $f->sync or exit 1' "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  if ! mv -f "$tmp" "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  sync_state_directory
+}
+
+sync_state_directory() {
+  perl -MIO::Handle -MFcntl=:DEFAULT -e 'sysopen(my $d, $ARGV[0], O_RDONLY | O_DIRECTORY) or exit 1; defined $d->sync or exit 1' "$STATE"
+}
+
+remove_transaction_files() {
+  local pending_path=$1 claim_path=$2
+  rm -f "$claim_path" || return 1
+  sync_state_directory || return 1
+  rm -f "$pending_path" || return 1
+  sync_state_directory
+}
+
+latest_escalate_decision() {
+  local id=$1 generation=$2
+  [ "$DECISION_LOG" != off ] || return 1
+  [ -f "$DECISION_LOG" ] && [ ! -L "$DECISION_LOG" ] || return 1
+  jq -cer -s --arg id "$id" --arg generation "$generation" '
+    [.[] | select(.id == $id and .generation == $generation)]
+    | last
+    | select(.verdict == "escalate")
+    | .decision_id
+    | select(type == "string" and length > 0)
+  ' "$DECISION_LOG" 2>/dev/null
+}
+
+decision_binding_valid() {
+  local id=$1 generation=$2 decision_id=$3
+  [ "$DECISION_LOG" != off ] || return 1
+  [ -f "$DECISION_LOG" ] && [ ! -L "$DECISION_LOG" ] || return 1
+  jq -e -s --arg id "$id" --arg generation "$generation" --arg decision_id "$decision_id" '
+    any(.[]; .id == $id and .generation == $generation and .decision_id == $decision_id and .verdict == "escalate")
+  ' "$DECISION_LOG" >/dev/null 2>&1
 }
 
 pending_field() {
@@ -1440,12 +1569,13 @@ pending_field() {
 }
 
 outcome_recorded() {
-  local log_path=${FM_DISPATCH_OUTCOMES:-$DATA/dispatch-outcomes.jsonl} prior_id=$1 note=$2
+  local log_path=${FM_DISPATCH_OUTCOMES:-$DATA/dispatch-outcomes.jsonl} prior_id=$1 generation=$2 note=$3
   [ -f "$log_path" ] || return 1
   jq -e -s \
     --arg prior_id "$prior_id" \
+    --arg generation "$generation" \
     --arg note "$note" \
-    'any(.[]; .id == $prior_id and .outcome == "escalated" and .note == $note)' \
+    'any(.[]; .id == $prior_id and .generation == $generation and .outcome == "escalated" and .note == $note)' \
     "$log_path" >/dev/null 2>&1
 }
 
@@ -1545,8 +1675,13 @@ cmd_escalate() {
   fi
 
   local prior_meta="$STATE/$prior_id.meta"
-  local existing_ef prior_profile escalated_from_value attempt_lock resolved_target resolution new_meta
-  local pending_path pending_prior pending_from pending_target pending_new pending_note pending_exists=0 requested_target new_existing_ef
+  local existing_ef prior_profile escalated_from_value attempt_lock claim_lock resolved_target resolution new_meta
+  local prior_generation decision_id transaction_id claim_path claim_transaction claim_prior claim_target claim_decision claim_generation new_generation new_reservation
+  local pending_path pending_prior pending_from pending_target pending_new pending_note pending_transaction pending_decision pending_generation
+  local pending_exists=0 requested_target new_existing_ef
+  decision_id=''
+  transaction_id=''
+  claim_transaction=''
   [ -f "$prior_meta" ] && [ ! -L "$prior_meta" ] || die "prior meta not found or unsafe: $prior_meta"
 
   if [ -z "$dispatch" ]; then
@@ -1560,15 +1695,25 @@ cmd_escalate() {
     die "prior meta must record harness/model/effort before escalate"
   fi
   escalated_from_value=$prior_profile
+  prior_generation=$(meta_value "$prior_meta" spawn_generation)
+  if [ "$dry_run" -eq 0 ]; then
+    [ -n "$prior_generation" ] || die "prior meta must record spawn_generation before escalate"
+  fi
 
   # shellcheck source=bin/fm-wake-lib.sh
   . "$SCRIPT_DIR/fm-wake-lib.sh"
   attempt_lock="$STATE/.$prior_id.stuck-escalate.lock"
   fm_lock_try_acquire "$attempt_lock" || die "escalate already in progress for $prior_id"
-  trap 'fm_lock_release "$attempt_lock"' EXIT
+  claim_lock="$STATE/.stuck-escalation-reservations.lock"
+  if ! fm_lock_try_acquire "$claim_lock"; then
+    fm_lock_release "$attempt_lock"
+    die "another escalation reservation is in progress"
+  fi
+  trap 'fm_lock_release "$claim_lock"; fm_lock_release "$attempt_lock"' EXIT
 
   existing_ef=$(meta_value "$prior_meta" escalated_from)
   pending_path="$STATE/.$prior_id.stuck-escalate.pending"
+  claim_path="$STATE/.$new_id.stuck-escalation-reservation"
   if [ -e "$pending_path" ] || [ -L "$pending_path" ]; then
     [ -f "$pending_path" ] && [ ! -L "$pending_path" ] || die "pending escalation record is unsafe: $pending_path"
     pending_exists=1
@@ -1577,21 +1722,28 @@ cmd_escalate() {
     pending_target=$(pending_field "$pending_path" target_profile) || die "pending escalation record is invalid"
     pending_new=$(pending_field "$pending_path" new_id) || die "pending escalation record is invalid"
     pending_note=$(pending_field "$pending_path" note) || die "pending escalation record is invalid"
+    pending_transaction=$(pending_field "$pending_path" transaction_id) || die "pending escalation record is invalid"
+    pending_decision=$(pending_field "$pending_path" decision_id) || die "pending escalation record is invalid"
+    pending_generation=$(pending_field "$pending_path" generation) || die "pending escalation record is invalid"
     [ "$pending_prior" = "$prior_id" ] || die "pending escalation record does not match prior id"
     requested_target=$(profile_display "$target_profile")
     [ "$pending_target" = "$requested_target" ] || die "pending escalation record does not match target profile"
     [ "$pending_new" = "$new_id" ] || die "pending escalation record does not match new id"
+    [ "$pending_generation" = "$prior_generation" ] || die "pending escalation record does not match prior generation"
     [ -z "$note" ] || [ "$note" = "$pending_note" ] || die "pending escalation record has a different note"
     escalated_from_value=$(profile_key "$pending_from") || die "pending escalation record has an invalid source profile"
     target_profile=$(profile_key "$pending_target") || die "pending escalation record has an invalid target profile"
     [ "$escalated_from_value" = "$prior_profile" ] || die "pending escalation source does not match prior meta"
     note=$pending_note
+    transaction_id=$pending_transaction
+    decision_id=$pending_decision
+    decision_binding_valid "$prior_id" "$prior_generation" "$decision_id" \
+      || die "pending escalation is not bound to a durable escalate decision"
     [ -z "$existing_ef" ] || [ "$existing_ef" = "$pending_from" ] || die "pending escalation marker does not match its source"
     if ! resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch"); then
       die "pending target is no longer the resolved stronger standing profile"
     fi
     [ "$resolved_target" = "$target_profile" ] || die "pending target is no longer the resolved stronger standing profile"
-    [ "$phase" != reserve ] || die "escalation is already reserved for $prior_id"
   else
     [ -z "$existing_ef" ] || die "already_escalated: prior meta has escalated_from=$existing_ef (no second auto-escalate)"
     if ! resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch"); then
@@ -1599,6 +1751,32 @@ cmd_escalate() {
     fi
     [ "$resolved_target" = "$target_profile" ] || die "target profile is not the resolved stronger standing profile"
     [ "$phase" != commit ] || die "no reserved escalation exists for $prior_id"
+    if [ "$dry_run" -eq 0 ]; then
+      decision_id=$(latest_escalate_decision "$prior_id" "$prior_generation") \
+        || die "reserve requires the latest durable classify decision for this task generation to be verdict=escalate"
+      if [ -f "$claim_path" ] && [ ! -L "$claim_path" ]; then
+        claim_prior=$(meta_value "$claim_path" prior_id)
+        claim_target=$(meta_value "$claim_path" target_profile)
+        claim_decision=$(meta_value "$claim_path" decision_id)
+        claim_generation=$(meta_value "$claim_path" generation)
+        if [ "$claim_prior" = "$prior_id" ] && [ "$claim_target" = "$(profile_display "$target_profile")" ] \
+          && [ "$claim_decision" = "$decision_id" ] && [ "$claim_generation" = "$prior_generation" ]; then
+          transaction_id=$(meta_value "$claim_path" transaction_id)
+        fi
+      fi
+      [ -n "$transaction_id" ] \
+        || transaction_id="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null).${BASHPID:-$$}.${RANDOM:-0}"
+    fi
+  fi
+
+  if [ "$dry_run" -eq 0 ] && { [ -e "$claim_path" ] || [ -L "$claim_path" ]; }; then
+    [ -f "$claim_path" ] && [ ! -L "$claim_path" ] || die "reservation claim is unsafe: $claim_path"
+    claim_transaction=$(meta_value "$claim_path" transaction_id)
+    [ -n "$transaction_id" ] && [ "$claim_transaction" = "$transaction_id" ] \
+      || die "new id is reserved by a different escalation transaction"
+  elif [ "$pending_exists" -eq 1 ] && [ "$phase" = commit ]; then
+    write_reservation_claim "$claim_path" "$transaction_id" "$prior_id" "$new_id" "$target_profile" "$decision_id" "$prior_generation" \
+      || die "reserved escalation could not recover its global new-id claim"
   fi
 
   if [ "$phase" = commit ]; then
@@ -1606,6 +1784,11 @@ cmd_escalate() {
     [ -f "$new_meta" ] && [ ! -L "$new_meta" ] || die "new meta not found or unsafe: $new_meta"
     [ -w "$new_meta" ] || die "new meta is not writable: $new_meta"
     new_existing_ef=$(meta_value "$new_meta" escalated_from)
+    new_reservation=$(meta_value "$new_meta" escalation_reservation)
+    new_generation=$(meta_value "$new_meta" spawn_generation)
+    [ -n "$new_generation" ] || die "new meta must record spawn_generation"
+    [ "$new_reservation" = "$transaction_id" ] \
+      || die "new meta is not bound to this escalation reservation"
     if [ "$pending_exists" -eq 1 ]; then
       [ -z "$new_existing_ef" ] || [ "$new_existing_ef" = "$pending_from" ] \
         || die "pending escalation marker does not match its source"
@@ -1637,6 +1820,7 @@ cmd_escalate() {
     printf 'metrics.thrash_cap=one_step\n'
     printf 'metrics.standing_profile_only=yes\n'
     trap - EXIT
+    fm_lock_release "$claim_lock"
     fm_lock_release "$attempt_lock"
     return 0
   fi
@@ -1644,30 +1828,43 @@ cmd_escalate() {
   [ -x "$OUTCOME_BIN" ] || [ -f "$OUTCOME_BIN" ] || die "outcome helper missing: $OUTCOME_BIN"
 
   if [ "$phase" = reserve ]; then
-    write_pending_escalation "$pending_path" "$prior_id" "$escalated_from_value" "$target_profile" "$new_id" "$note" \
-      || die "failed to create pending escalation record"
+    if [ ! -e "$claim_path" ] && [ ! -L "$claim_path" ]; then
+      write_reservation_claim "$claim_path" "$transaction_id" "$prior_id" "$new_id" "$target_profile" "$decision_id" "$prior_generation" \
+        || die "failed to create global new-id reservation claim"
+    fi
+    if [ "$pending_exists" -eq 0 ]; then
+      write_pending_escalation "$pending_path" "$prior_id" "$escalated_from_value" "$target_profile" "$new_id" "$note" \
+        "$transaction_id" "$decision_id" "$prior_generation" || die "failed to create pending escalation record"
+    fi
+    sync_regular_file "$claim_path" && sync_regular_file "$pending_path" && sync_state_directory \
+      || die "failed to make escalation reservation durable"
     printf 'verdict=reserved\n'
     printf 'prior_id=%s\n' "$prior_id"
     printf 'prior_profile=%s\n' "$(profile_display "$escalated_from_value")"
     printf 'target_profile=%s\n' "$(profile_display "$target_profile")"
     printf 'new_id=%s\n' "$new_id"
+    printf 'reservation_id=%s\n' "$transaction_id"
     trap - EXIT
+    fm_lock_release "$claim_lock"
     fm_lock_release "$attempt_lock"
     return 0
   fi
 
+  sync_regular_file "$claim_path" && sync_regular_file "$pending_path" && sync_state_directory \
+    || die "failed to make pending escalation durable before commit"
   ensure_meta_field "$prior_meta" escalated_from "$(profile_display "$escalated_from_value")" \
     || die "failed to write prior escalation marker"
   ensure_meta_field "$new_meta" escalated_from "$(profile_display "$escalated_from_value")" \
     || die "failed to write new escalation marker"
 
-  if ! outcome_recorded "$prior_id" "$metrics_note"; then
+  if ! outcome_recorded "$prior_id" "$prior_generation" "$metrics_note"; then
     if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       "$OUTCOME_BIN" record "$prior_id" --outcome escalated --note "$metrics_note" --once; then
       die "failed to record escalated outcome for $prior_id; pending transaction remains"
     fi
   fi
-  rm -f "$pending_path" || die "escalation committed but pending record could not be removed"
+  remove_transaction_files "$pending_path" "$claim_path" \
+    || die "escalation committed but transaction records could not be removed"
 
   printf 'verdict=escalated\n'
   printf 'prior_id=%s\n' "$prior_id"
@@ -1682,6 +1879,7 @@ cmd_escalate() {
   printf 'metrics.standing_profile_only=yes\n'
   printf 'metrics.blocked_vs_escalated=escalated\n'
   trap - EXIT
+  fm_lock_release "$claim_lock"
   fm_lock_release "$attempt_lock"
   return 0
 }

@@ -27,7 +27,7 @@ The cleanup continues if this best-effort measurement write fails.
 
 For endings outside cleanup, record a verified `done` or `failed` outcome directly.
 Record `blocked` for infrastructure and external blockers that are not capability misses.
-The stuck escalation helper records `escalated` on the prior attempt when its apply transaction succeeds.
+The stuck escalation helper records `escalated` on the prior attempt when its apply transaction succeeds. `--once` idempotency is scoped to the durable task `spawn_generation`, outcome, and note, so a reused task id starts a distinct measurement generation.
 
 `suggest` is evidence for intake judgment only.
 It must never rewrite dispatch configuration.
@@ -44,7 +44,7 @@ Firstmate may re-run a task with one stronger standing profile when all of the f
 - The task has not already received an automatic escalation.
 
 The threshold is configurable through `--n` or `FM_STUCK_CLASSIFY_N`.
-A stronger target must already exist in the active `config/crew-dispatch.json`, carry a strictly greater public `strength` value than the current standing profile, and be the only profile at the next greater strength.
+A stronger target must already exist in the active `config/crew-dispatch.json`, carry a public integer `strength` from 0 through 2147483647 that is strictly greater than the current standing profile, and be the only profile at the next greater strength.
 The helper never invents a model, runtime, or effort tier.
 Equal-strength harness, model, or effort changes are lateral and never qualify for automatic escalation.
 
@@ -61,7 +61,7 @@ Worker self-report without failed-acceptance evidence is never sufficient.
 | --- | --- |
 | `classify` | Produce a pure evidence decision and stable reason code |
 | `resolve-stronger --from-profile <h[/m[/e]]>` | Select one stronger standing profile without changing configuration |
-| `escalate <prior-id> --target-profile ... --new-id ... --reserve` | Reserve validated linkage before spawning the follow-on |
+| `escalate <prior-id> --target-profile ... --new-id ... --reserve` | Bind the latest durable `escalate` decision and reserve the follow-on id before spawning |
 | `escalate <prior-id> --target-profile ... --new-id ... --commit` | Commit linkage after follow-on metadata matches the target |
 
 The possible verdicts are `escalate`, `refuse`, and `uncertain`.
@@ -69,13 +69,14 @@ Incomplete or ambiguous durable evidence returns `uncertain` and never silently 
 Dead endpoints remain the responsibility of stuck-worker recovery.
 
 The reserve path persists the validated source, target, and follow-on id without changing either task record or the ending log.
-The commit path verifies the follow-on harness, model, and effort against the reserved target, writes `escalated_from=` to both task records, then records the prior outcome as `escalated`.
-It uses a recoverable pending transaction so a failed outcome append can be retried without duplicating linkage.
+The reservation returns `reservation_id`; pass it to `fm-spawn.sh --escalation-reservation` for the follow-on.
+The commit path verifies that reservation identity plus the follow-on harness, model, and effort against the reserved target, writes `escalated_from=` durably to both task records, then records the prior outcome as `escalated`.
+It uses a recoverable pending transaction and global follow-on-id claim so a failed apply can be retried without duplicating or misattributing linkage.
 It refuses arbitrary targets, unreserved commits, mismatched or missing follow-on metadata, concurrent duplicate apply attempts, and any second apply after linkage exists.
 
 ## Classify decision log
 
-Every successful `classify` call appends one JSON line to `data/stuck-classify-decisions.jsonl` by default.
+Every successful `classify` call appends one JSON line to `data/stuck-classify-decisions.jsonl` by default. Records include a decision identity and the task's `spawn_generation` when an authoritative task record exists, allowing reserve to bind the latest decision to that exact attempt.
 `FM_DATA_OVERRIDE` changes the data root, `FM_STUCK_CLASSIFY_LOG` selects an explicit path, and the value `off` disables decision logging for a decision-only caller.
 
 Each line records a UTC timestamp, optional task id, normalized evidence, threshold metrics, verdict, reason, and detail.

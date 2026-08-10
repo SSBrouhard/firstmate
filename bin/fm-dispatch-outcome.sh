@@ -227,6 +227,7 @@ if ($once ne '0') {
     next if $item eq '';
     my $existing = eval { JSON::PP::decode_json($item) } or exit 1;
     if (($existing->{id} // '') eq ($record->{id} // '') &&
+        ($existing->{generation} // '') eq ($record->{generation} // '') &&
         ($existing->{outcome} // '') eq ($record->{outcome} // '') &&
         ($existing->{note} // '') eq ($record->{note} // '')) {
       exit 0;
@@ -323,7 +324,7 @@ cmd_record() {
   . "$SCRIPT_DIR/fm-wake-lib.sh"
 
   local meta="$STATE/$id.meta"
-  local harness model effort kind mode project escalated_from repo ts line lock
+  local harness model effort kind mode project escalated_from generation repo ts line lock
   harness=$(meta_value "$meta" harness)
   model=$(meta_value "$meta" model)
   effort=$(meta_value "$meta" effort)
@@ -331,13 +332,19 @@ cmd_record() {
   mode=$(meta_value "$meta" mode)
   project=$(meta_value "$meta" project)
   escalated_from=$(meta_value "$meta" escalated_from)
+  generation=$(meta_value "$meta" spawn_generation)
+  [ -n "$generation" ] || generation=$(meta_value "$meta" busy_gen)
+  if [ "$once" -eq 1 ] && [ -z "$generation" ]; then
+    die "--once requires durable spawn_generation metadata for $id"
+  fi
   repo=$(repo_name_from_project "$project")
   ts=$(iso_now)
 
   # Build one compact JSON object without requiring jq.
-  line=$(printf '{"ts":"%s","id":"%s","outcome":"%s","harness":"%s","model":"%s","effort":"%s","kind":"%s","mode":"%s","project":"%s","repo":"%s","escalated_from":"%s","note":"%s"}' \
+  line=$(printf '{"ts":"%s","id":"%s","generation":"%s","outcome":"%s","harness":"%s","model":"%s","effort":"%s","kind":"%s","mode":"%s","project":"%s","repo":"%s","escalated_from":"%s","note":"%s"}' \
     "$(json_escape "$ts")" \
     "$(json_escape "$id")" \
+    "$(json_escape "$generation")" \
     "$(json_escape "$outcome")" \
     "$(json_escape "$harness")" \
     "$(json_escape "$model")" \

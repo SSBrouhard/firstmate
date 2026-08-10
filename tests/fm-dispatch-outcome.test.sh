@@ -30,6 +30,7 @@ kind=ship
 mode=no-mistakes
 model=gpt-5.5
 effort=medium
+spawn_generation=gen-$id
 escalated_from=claude/haiku/low
 EOF
 }
@@ -109,6 +110,7 @@ test_record_from_meta() {
   line=$(cat "$LOG_PATH")
   assert_contains "$line" '"id":"t-record"' "log should include id"
   assert_contains "$line" '"outcome":"done"' "log should include outcome"
+  assert_contains "$line" '"generation":"gen-t-record"' "log should include task generation"
   assert_contains "$line" '"harness":"codex"' "log should pull harness from meta"
   assert_contains "$line" '"model":"gpt-5.5"' "log should pull model from meta"
   assert_contains "$line" '"effort":"medium"' "log should pull effort from meta"
@@ -180,11 +182,24 @@ test_record_recovers_pending_partial_append() {
 
 test_record_once_is_idempotent_under_lock() {
   rm -f "$LOG_PATH" "$LOG_PATH.pending"
+  write_meta teardown-id
   run_oc record teardown-id --outcome done --note teardown --once >/dev/null
   run_oc record teardown-id --outcome done --note teardown --once >/dev/null
   [ "$(wc -l <"$LOG_PATH" | tr -d ' ')" -eq 1 ] \
     || fail "--once appended a duplicate ending"
   pass "fm-dispatch-outcome.sh: --once deduplicates an ending under the log lock"
+}
+
+test_record_once_distinguishes_reused_task_ids() {
+  rm -f "$LOG_PATH" "$LOG_PATH.pending"
+  write_meta reused-id
+  run_oc record reused-id --outcome done --note teardown --once >/dev/null
+  sed -i.bak 's/spawn_generation=gen-reused-id/spawn_generation=gen-reused-id-2/' "$STATE_DIR/reused-id.meta"
+  rm -f "$STATE_DIR/reused-id.meta.bak"
+  run_oc record reused-id --outcome done --note teardown --once >/dev/null
+  [ "$(wc -l <"$LOG_PATH" | tr -d ' ')" -eq 2 ] \
+    || fail "--once collapsed distinct task generations"
+  pass "fm-dispatch-outcome.sh: --once keys idempotency by task generation"
 }
 
 test_suggest_decodes_escaped_fields() {
@@ -283,6 +298,7 @@ test_record_escapes_note
 test_concurrent_records_do_not_interleave
 test_record_recovers_pending_partial_append
 test_record_once_is_idempotent_under_lock
+test_record_once_distinguishes_reused_task_ids
 test_suggest_decodes_escaped_fields
 test_suggest_sanitizes_tsv_fields
 test_show_and_suggest
