@@ -12,9 +12,9 @@ Set `FM_DISPATCH_OUTCOMES` or pass `--log` to select another path.
 
 | Command | Role |
 | --- | --- |
-| `record <id> --outcome <done\|failed\|escalated\|blocked> [--note "..."]` | Append one JSON line using dispatch fields from `state/<id>.meta` when available |
-| `suggest [--kind ship\|scout] [--repo <name>] [--limit N]` | Summarize recent matching outcomes as intake evidence |
-| `show [--limit N]` | Print the newest raw outcome lines |
+| `record` | Append one ending using dispatch fields from the task record when available |
+| `suggest` | Summarize recent matching outcomes as intake evidence |
+| `show` | Print the newest raw outcome lines |
 
 The log never edits `config/crew-dispatch.json` and does not select or change a running worker's profile.
 It is not an online bandit and performs no network access.
@@ -27,7 +27,8 @@ The cleanup continues if this best-effort measurement write fails.
 
 For endings outside cleanup, record a verified `done` or `failed` outcome directly.
 Record `blocked` for infrastructure and external blockers that are not capability misses.
-The stuck escalation helper records `escalated` on the prior attempt when its apply transaction succeeds. `--once` idempotency is scoped to the durable task `spawn_generation`, outcome, and note, so a reused task id starts a distinct measurement generation.
+The stuck escalation helper records `escalated` on the prior attempt when its apply transaction succeeds.
+`record --once` idempotency is scoped to the durable task `spawn_generation`, outcome, and note, so a reused task id starts a distinct measurement generation.
 
 `suggest` is evidence for intake judgment only.
 It must never rewrite dispatch configuration.
@@ -59,10 +60,10 @@ Worker self-report without failed-acceptance evidence is never sufficient.
 
 | Command | Role |
 | --- | --- |
-| `classify` | Produce a pure evidence decision and stable reason code |
-| `resolve-stronger --from-profile <h[/m[/e]]>` | Select one stronger standing profile without changing configuration |
-| `escalate <prior-id> --target-profile ... --new-id ... --reserve` | Bind the latest durable `escalate` decision and reserve the follow-on id before spawning |
-| `escalate <prior-id> --target-profile ... --new-id ... --commit` | Commit linkage after follow-on metadata matches the target |
+| `classify` | Classify durable evidence and emit a verdict and stable reason code |
+| `resolve-stronger` | Select one stronger standing profile without changing configuration |
+| `escalate --reserve` | Bind the latest durable `escalate` decision and reserve the follow-on id before spawning |
+| `escalate --commit` | Commit linkage after follow-on metadata matches the target |
 
 The possible verdicts are `escalate`, `refuse`, and `uncertain`.
 Incomplete or ambiguous durable evidence returns `uncertain` and never silently escalates.
@@ -76,7 +77,8 @@ It refuses arbitrary targets, unreserved commits, mismatched or missing follow-o
 
 ## Classify decision log
 
-Every successful `classify` call appends one JSON line to `data/stuck-classify-decisions.jsonl` by default. Records include a decision identity and the task's `spawn_generation` when an authoritative task record exists, allowing reserve to bind the latest decision to that exact attempt.
+Every successful `classify` call appends one JSON line to `data/stuck-classify-decisions.jsonl` by default.
+Records include a decision identity and the task's `spawn_generation` when an authoritative task record exists, allowing reserve to bind the latest decision to that exact attempt.
 `FM_DATA_OVERRIDE` changes the data root, `FM_STUCK_CLASSIFY_LOG` selects an explicit path, and the value `off` disables decision logging for a decision-only caller.
 
 Each line records a UTC timestamp, optional task id, normalized evidence, threshold metrics, verdict, reason, and detail.
