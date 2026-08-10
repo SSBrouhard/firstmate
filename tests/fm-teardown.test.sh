@@ -1305,6 +1305,40 @@ test_teardown_refuses_while_spawn_lifecycle_lock_is_held() {
   pass "teardown serializes with the per-task spawn lifecycle lock"
 }
 
+test_teardown_exit_trap_guards_herdr_release_before_definition() {
+  # The EXIT trap must release the lifecycle lock even when
+  # teardown_release_herdr_locks is not yet defined (early abort path).
+  # Earlier cases may leave set -e on; keep the failing subshell assignment safe.
+  local out rc
+  rc=0
+  out=$(bash -c '
+    set -eu
+    TEARDOWN_TASK_LOCK_HELD=1
+    TEARDOWN_TASK_LOCK=/tmp/fm-teardown-guard-test.lock
+    TEARDOWN_HERDR_LOCK_RECORDS=
+    fm_lock_release() { printf "released:%s\n" "$1"; }
+    teardown_release_all_locks() {
+      if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
+        teardown_release_herdr_locks
+      fi
+      if [ "${TEARDOWN_TASK_LOCK_HELD:-0}" = 1 ]; then
+        TEARDOWN_TASK_LOCK_HELD=0
+        fm_lock_release "$TEARDOWN_TASK_LOCK" || true
+      fi
+    }
+    trap teardown_release_all_locks EXIT
+    # Early exit before teardown_release_herdr_locks would be defined in the real script.
+    exit 1
+  ' 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "guarded early EXIT should keep the original exit status, got $rc"
+  assert_contains "$out" "released:/tmp/fm-teardown-guard-test.lock" \
+    "early EXIT must still release the task lifecycle lock"
+  # And the real helper must use declare -F so this contract stays wired.
+  assert_grep 'declare -F teardown_release_herdr_locks' "$ROOT/bin/fm-teardown.sh" \
+    "teardown EXIT trap must guard teardown_release_herdr_locks with declare -F"
+  pass "teardown EXIT trap releases lifecycle lock before Herdr helper is defined"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
@@ -1875,6 +1909,7 @@ test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_missing_busy_sidecar_completes
 test_teardown_refuses_while_spawn_lifecycle_lock_is_held
+test_teardown_exit_trap_guards_herdr_release_before_definition
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence

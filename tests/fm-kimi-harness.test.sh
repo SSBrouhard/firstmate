@@ -473,7 +473,7 @@ test_kimi_missing_binary_refuses_before_pane_creation() {
 }
 
 test_kimi_unconfirmed_delivery_fails_loudly() {
-  local id rec out rc
+  local id rec out rc meta
   id=kimi-drop-z2
   rec=$(make_spawn_case drop "$id")
   read_spawn_record "$rec"
@@ -485,11 +485,16 @@ test_kimi_unconfirmed_delivery_fails_loudly() {
     "unconfirmed kimi delivery lacked a loud diagnostic"
   assert_grep 'failed: kimi brief pointer delivery was not confirmed' "$HOME_DIR/state/$id.status" \
     "unconfirmed kimi delivery did not leave a supervisor-visible failure"
+  meta="$HOME_DIR/state/$id.meta"
+  if [ -f "$meta" ]; then
+    assert_not_contains "$(cat "$meta")" "launch_complete_generation=" \
+      "failed kimi delivery must not retain launch_complete_generation"
+  fi
   pass "fm-spawn: kimi treats a silent pointer drop as a failed spawn"
 }
 
 test_kimi_readiness_gate_precedes_pointer() {
-  local id rec out rc
+  local id rec out rc meta
   id=kimi-not-ready-z3
   rec=$(make_spawn_case not-ready "$id")
   read_spawn_record "$rec"
@@ -500,7 +505,31 @@ test_kimi_readiness_gate_precedes_pointer() {
   assert_contains "$out" "kimi did not show a verified ready signal" \
     "kimi readiness failure lacked a loud diagnostic"
   [ ! -s "$CASE_DIR/pointer.log" ] || fail "kimi pointer was sent before readiness"
+  meta="$HOME_DIR/state/$id.meta"
+  if [ -f "$meta" ]; then
+    assert_not_contains "$(cat "$meta")" "launch_complete_generation=" \
+      "failed kimi readiness must not retain launch_complete_generation"
+  fi
   pass "fm-spawn: kimi never sends the brief pointer before an observable ready signal"
+}
+
+test_kimi_success_retains_launch_complete_after_gates() {
+  local id rec out rc meta generation
+  id="kimi-complete-z9-$$"
+  rec=$(make_spawn_case complete "$id")
+  read_spawn_record "$rec"
+  rc=0
+  out=$(run_spawn \
+    "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
+    --model kimi-code/k3 --effort high) || rc=$?
+  expect_code 0 "$rc" "verified kimi launch should succeed"
+  meta="$HOME_DIR/state/$id.meta"
+  assert_present "$meta" "kimi success did not write metadata"
+  generation=$(grep '^spawn_generation=' "$meta" | tail -1 | cut -d= -f2-)
+  [ -n "$generation" ] || fail "kimi success meta missing spawn_generation"
+  assert_grep "launch_complete_generation=$generation" "$meta" \
+    "kimi success must retain launch_complete only after readiness and delivery"
+  pass "fm-spawn: kimi marks launch complete only after readiness and brief delivery"
 }
 
 test_kimi_detection_uses_ancestry_after_markers() {
@@ -669,6 +698,7 @@ test_kimi_falls_back_to_expanded_home_binary
 test_kimi_missing_binary_refuses_before_pane_creation
 test_kimi_unconfirmed_delivery_fails_loudly
 test_kimi_readiness_gate_precedes_pointer
+test_kimi_success_retains_launch_complete_after_gates
 test_kimi_detection_uses_ancestry_after_markers
 test_kimi_session_lock_identity
 test_kimi_busy_signature_is_scoped_to_spinner_lines

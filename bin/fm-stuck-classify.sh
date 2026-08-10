@@ -1539,6 +1539,43 @@ remove_transaction_files() {
   sync_state_directory
 }
 
+# True when markers, outcome, and transaction journal are fully settled.
+# Used for crash-safe commit retries after a late fsync failure.
+# Note text is optional: a generation-bound escalated outcome is enough.
+escalation_commit_settled() {
+  local prior_meta=$1 new_meta=$2 from_display=$3 prior_id=$4 generation=$5 note=$6 pending_path=$7 claim_path=$8
+  local log_path=${FM_DISPATCH_OUTCOMES:-$DATA/dispatch-outcomes.jsonl}
+  [ -f "$prior_meta" ] && [ ! -L "$prior_meta" ] || return 1
+  [ -f "$new_meta" ] && [ ! -L "$new_meta" ] || return 1
+  [ "$(meta_value "$prior_meta" escalated_from)" = "$from_display" ] || return 1
+  [ "$(meta_value "$new_meta" escalated_from)" = "$from_display" ] || return 1
+  [ "$(meta_value "$new_meta" escalated_prior_id)" = "$prior_id" ] || return 1
+  if [ -n "$note" ] && outcome_recorded "$prior_id" "$generation" "$note"; then
+    :
+  elif [ -f "$log_path" ] && jq -e -s \
+    --arg prior_id "$prior_id" \
+    --arg generation "$generation" \
+    'any(.[]; .id == $prior_id and .generation == $generation and .outcome == "escalated")' \
+    "$log_path" >/dev/null 2>&1; then
+    :
+  else
+    return 1
+  fi
+  { [ ! -e "$pending_path" ] && [ ! -L "$pending_path" ]; } || return 1
+  { [ ! -e "$claim_path" ] && [ ! -L "$claim_path" ]; } || return 1
+  return 0
+}
+
+decision_log_lock_path() {
+  local parent base
+  [ "$DECISION_LOG" != off ] || return 1
+  parent=$(dirname "$DECISION_LOG") || return 1
+  decision_log_parent "$parent" || return 1
+  parent=$(cd "$parent" 2>/dev/null && pwd -P) || return 1
+  base=$(basename "$DECISION_LOG") || return 1
+  printf '%s\n' "$parent/$base.lock"
+}
+
 latest_escalate_decision() {
   local id=$1 generation=$2
   [ "$DECISION_LOG" != off ] || return 1
@@ -1673,14 +1710,17 @@ cmd_escalate() {
   fi
 
   local prior_meta="$STATE/$prior_id.meta"
-  local existing_ef prior_profile escalated_from_value attempt_lock claim_lock new_spawn_lock resolved_target resolution new_meta
+  local existing_ef prior_profile escalated_from_value attempt_lock claim_lock prior_spawn_lock new_spawn_lock resolved_target resolution new_meta
   local prior_generation decision_id transaction_id claim_path claim_transaction claim_prior claim_target claim_decision claim_generation new_generation new_reservation
   local pending_path pending_prior pending_from pending_target pending_new pending_note pending_transaction pending_decision pending_generation
-  local pending_exists=0 requested_target new_existing_ef launch_complete_generation new_spawn_lock_held=0
+  local pending_exists=0 requested_target new_existing_ef launch_complete_generation
+  local prior_spawn_lock_held=0 new_spawn_lock_held=0 decision_log_lock='' decision_log_lock_held=0
+  local first_spawn_lock second_spawn_lock first_spawn_holder second_spawn_holder
+  local ordered_ids first_id
+  local from_display metrics_note
   decision_id=''
   transaction_id=''
   claim_transaction=''
-  [ -f "$prior_meta" ] && [ ! -L "$prior_meta" ] || die "prior meta not found or unsafe: $prior_meta"
 
   if [ -z "$dispatch" ]; then
     dispatch=$DEFAULT_DISPATCH
@@ -1689,6 +1729,81 @@ cmd_escalate() {
   command -v jq >/dev/null 2>&1 || die "jq required to verify standing profiles"
   dispatch_profiles_valid "$dispatch" || die "invalid dispatch profiles: $dispatch"
 
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  attempt_lock="$STATE/.$prior_id.stuck-escalate.lock"
+  claim_lock="$STATE/.stuck-escalation-reservations.lock"
+  prior_spawn_lock="$STATE/.spawn-$prior_id.lock"
+  new_spawn_lock=
+  [ -z "$new_id" ] || new_spawn_lock="$STATE/.spawn-$new_id.lock"
+  pending_path="$STATE/.$prior_id.stuck-escalate.pending"
+  claim_path=
+  [ -z "$new_id" ] || claim_path="$STATE/.$new_id.stuck-escalation-reservation"
+
+  # Acquire escalate + claim locks, then both task lifecycle locks in
+  # deterministic ID order before any task metadata reads so concurrent
+  # teardown cannot delete prior meta mid-transaction.
+  fm_lock_try_acquire "$attempt_lock" || die "escalate already in progress for $prior_id"
+  if ! fm_lock_try_acquire "$claim_lock"; then
+    fm_lock_release "$attempt_lock"
+    die "another escalation reservation is in progress"
+  fi
+  if [ -n "$new_id" ]; then
+    # Deterministic ID order without PATH tools (policy suite uses a minimal PATH).
+    ordered_ids=$(printf '%s\n%s\n' "$prior_id" "$new_id" | LC_ALL=C sort)
+    first_id=${ordered_ids%%$'\n'*}
+    if [ "$first_id" = "$prior_id" ]; then
+      first_spawn_lock=$prior_spawn_lock
+      first_spawn_holder=prior
+      second_spawn_lock=$new_spawn_lock
+      second_spawn_holder=new
+    else
+      first_spawn_lock=$new_spawn_lock
+      first_spawn_holder=new
+      second_spawn_lock=$prior_spawn_lock
+      second_spawn_holder=prior
+    fi
+    if ! fm_lock_try_acquire "$first_spawn_lock"; then
+      fm_lock_release "$claim_lock"
+      fm_lock_release "$attempt_lock"
+      if [ "$first_spawn_holder" = prior ]; then
+        die "task $prior_id lifecycle is busy"
+      fi
+      die "task $new_id lifecycle is busy"
+    fi
+    if [ "$first_spawn_holder" = prior ]; then
+      prior_spawn_lock_held=1
+    else
+      new_spawn_lock_held=1
+    fi
+    if ! fm_lock_try_acquire "$second_spawn_lock"; then
+      [ "$prior_spawn_lock_held" = 0 ] || fm_lock_release "$prior_spawn_lock"
+      [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
+      prior_spawn_lock_held=0
+      new_spawn_lock_held=0
+      fm_lock_release "$claim_lock"
+      fm_lock_release "$attempt_lock"
+      if [ "$second_spawn_holder" = prior ]; then
+        die "task $prior_id lifecycle is busy"
+      fi
+      die "task $new_id lifecycle is busy"
+    fi
+    if [ "$second_spawn_holder" = prior ]; then
+      prior_spawn_lock_held=1
+    else
+      new_spawn_lock_held=1
+    fi
+  else
+    if ! fm_lock_try_acquire "$prior_spawn_lock"; then
+      fm_lock_release "$claim_lock"
+      fm_lock_release "$attempt_lock"
+      die "task $prior_id lifecycle is busy"
+    fi
+    prior_spawn_lock_held=1
+  fi
+  trap '[ "${decision_log_lock_held:-0}" = 0 ] || fm_lock_release "$decision_log_lock"; [ "${prior_spawn_lock_held:-0}" = 0 ] || fm_lock_release "$prior_spawn_lock"; [ "${new_spawn_lock_held:-0}" = 0 ] || fm_lock_release "$new_spawn_lock"; fm_lock_release "$claim_lock"; fm_lock_release "$attempt_lock"' EXIT
+
+  [ -f "$prior_meta" ] && [ ! -L "$prior_meta" ] || die "prior meta not found or unsafe: $prior_meta"
   if ! prior_profile=$(profile_from_meta "$prior_meta" 2>/dev/null); then
     die "prior meta must record harness/model/effort before escalate"
   fi
@@ -1698,30 +1813,7 @@ cmd_escalate() {
     [ -n "$prior_generation" ] || die "prior meta must record spawn_generation before escalate"
   fi
 
-  # shellcheck source=bin/fm-wake-lib.sh
-  . "$SCRIPT_DIR/fm-wake-lib.sh"
-  attempt_lock="$STATE/.$prior_id.stuck-escalate.lock"
-  fm_lock_try_acquire "$attempt_lock" || die "escalate already in progress for $prior_id"
-  claim_lock="$STATE/.stuck-escalation-reservations.lock"
-  if ! fm_lock_try_acquire "$claim_lock"; then
-    fm_lock_release "$attempt_lock"
-    die "another escalation reservation is in progress"
-  fi
-  new_spawn_lock=
-  if [ -n "$new_id" ]; then
-    new_spawn_lock="$STATE/.spawn-$new_id.lock"
-    if ! fm_lock_try_acquire "$new_spawn_lock"; then
-      fm_lock_release "$claim_lock"
-      fm_lock_release "$attempt_lock"
-      die "task $new_id lifecycle is busy"
-    fi
-    new_spawn_lock_held=1
-  fi
-  trap '[ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"; fm_lock_release "$claim_lock"; fm_lock_release "$attempt_lock"' EXIT
-
   existing_ef=$(meta_value "$prior_meta" escalated_from)
-  pending_path="$STATE/.$prior_id.stuck-escalate.pending"
-  claim_path="$STATE/.$new_id.stuck-escalation-reservation"
   if [ -e "$pending_path" ] || [ -L "$pending_path" ]; then
     [ -f "$pending_path" ] && [ ! -L "$pending_path" ] || die "pending escalation record is unsafe: $pending_path"
     pending_exists=1
@@ -1753,6 +1845,37 @@ cmd_escalate() {
     fi
     [ "$resolved_target" = "$target_profile" ] || die "pending target is no longer the resolved stronger standing profile"
   else
+    from_display=$(profile_display "$escalated_from_value")
+    metrics_note="stuck_classify escalate prior=$prior_id from=$from_display to=$(profile_display "$target_profile")"
+    [ -n "$note" ] && metrics_note="$metrics_note; $note"
+    # Idempotent success: markers + outcome already durable and journal cleared
+    # (e.g. prior commit died after cleanup when final directory fsync failed).
+    if [ "$dry_run" -eq 0 ] && [ "$phase" = commit ] && [ -n "$existing_ef" ] && [ -n "$new_id" ]; then
+      new_meta="$STATE/$new_id.meta"
+      if [ -f "$new_meta" ] && [ ! -L "$new_meta" ] \
+        && escalation_commit_settled "$prior_meta" "$new_meta" "$from_display" \
+          "$prior_id" "$prior_generation" "$metrics_note" "$pending_path" "$claim_path"; then
+        printf 'verdict=escalated\n'
+        printf 'prior_id=%s\n' "$prior_id"
+        printf 'prior_profile=%s\n' "$from_display"
+        printf 'target_profile=%s\n' "$(profile_display "$target_profile")"
+        printf 'escalated_from=%s\n' "$from_display"
+        printf 'new_id=%s\n' "$new_id"
+        printf 'outcome=escalated\n'
+        printf 'note=%s\n' "$metrics_note"
+        printf 'metrics.action=escalate\n'
+        printf 'metrics.thrash_cap=one_step\n'
+        printf 'metrics.standing_profile_only=yes\n'
+        printf 'metrics.blocked_vs_escalated=escalated\n'
+        trap - EXIT
+        [ "$decision_log_lock_held" = 0 ] || fm_lock_release "$decision_log_lock"
+        [ "$prior_spawn_lock_held" = 0 ] || fm_lock_release "$prior_spawn_lock"
+        [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
+        fm_lock_release "$claim_lock"
+        fm_lock_release "$attempt_lock"
+        return 0
+      fi
+    fi
     [ -z "$existing_ef" ] || die "already_escalated: prior meta has escalated_from=$existing_ef (no second auto-escalate)"
     if ! resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch"); then
       die "no stronger standing profile for prior task $prior_id"
@@ -1760,6 +1883,14 @@ cmd_escalate() {
     [ "$resolved_target" = "$target_profile" ] || die "target profile is not the resolved stronger standing profile"
     [ "$phase" != commit ] || die "no reserved escalation exists for $prior_id"
     if [ "$dry_run" -eq 0 ]; then
+      # Linearize latest-decision selection with reservation publication under
+      # the decision-log lock so a concurrent classify cannot leave reserve
+      # bound to a stale escalate after a newer refusal is already logged.
+      decision_log_lock=$(decision_log_lock_path) \
+        || die "reserve requires a durable classify decision log"
+      acquire_decision_log_lock "$decision_log_lock" \
+        || die "could not acquire classify decision log lock for reserve"
+      decision_log_lock_held=1
       decision_id=$(latest_escalate_decision "$prior_id" "$prior_generation") \
         || die "reserve requires the latest durable classify decision for this task generation to be verdict=escalate"
       if [ -f "$claim_path" ] && [ ! -L "$claim_path" ]; then
@@ -1777,7 +1908,7 @@ cmd_escalate() {
     fi
   fi
 
-  if [ "$dry_run" -eq 0 ] && { [ -e "$claim_path" ] || [ -L "$claim_path" ]; }; then
+  if [ "$dry_run" -eq 0 ] && [ -n "$claim_path" ] && { [ -e "$claim_path" ] || [ -L "$claim_path" ]; }; then
     [ -f "$claim_path" ] && [ ! -L "$claim_path" ] || die "reservation claim is unsafe: $claim_path"
     claim_transaction=$(meta_value "$claim_path" transaction_id)
     [ -n "$transaction_id" ] && [ "$claim_transaction" = "$transaction_id" ] \
@@ -1814,16 +1945,16 @@ cmd_escalate() {
   fi
   [ -w "$prior_meta" ] || die "prior meta is not writable: $prior_meta"
 
-  local metrics_note
-  metrics_note="stuck_classify escalate prior=$prior_id from=$(profile_display "$escalated_from_value") to=$(profile_display "$target_profile")"
+  from_display=$(profile_display "$escalated_from_value")
+  metrics_note="stuck_classify escalate prior=$prior_id from=$from_display to=$(profile_display "$target_profile")"
   [ -n "$note" ] && metrics_note="$metrics_note; $note"
 
   if [ "$dry_run" -eq 1 ]; then
     printf 'verdict=dry-run\n'
     printf 'prior_id=%s\n' "$prior_id"
-    printf 'prior_profile=%s\n' "$(profile_display "$escalated_from_value")"
+    printf 'prior_profile=%s\n' "$from_display"
     printf 'target_profile=%s\n' "$(profile_display "$target_profile")"
-    printf 'escalated_from=%s\n' "$(profile_display "$escalated_from_value")"
+    printf 'escalated_from=%s\n' "$from_display"
     [ -n "$new_id" ] && printf 'new_id=%s\n' "$new_id"
     printf 'outcome=escalated\n'
     printf 'note=%s\n' "$metrics_note"
@@ -1831,6 +1962,8 @@ cmd_escalate() {
     printf 'metrics.thrash_cap=one_step\n'
     printf 'metrics.standing_profile_only=yes\n'
     trap - EXIT
+    [ "$decision_log_lock_held" = 0 ] || fm_lock_release "$decision_log_lock"
+    [ "$prior_spawn_lock_held" = 0 ] || fm_lock_release "$prior_spawn_lock"
     [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
     fm_lock_release "$claim_lock"
     fm_lock_release "$attempt_lock"
@@ -1853,13 +1986,18 @@ cmd_escalate() {
       || ! sync_state_directory; then
       die "failed to make escalation reservation durable"
     fi
+    if [ "$decision_log_lock_held" = 1 ]; then
+      decision_log_lock_held=0
+      fm_lock_release "$decision_log_lock" || true
+    fi
     printf 'verdict=reserved\n'
     printf 'prior_id=%s\n' "$prior_id"
-    printf 'prior_profile=%s\n' "$(profile_display "$escalated_from_value")"
+    printf 'prior_profile=%s\n' "$from_display"
     printf 'target_profile=%s\n' "$(profile_display "$target_profile")"
     printf 'new_id=%s\n' "$new_id"
     printf 'reservation_id=%s\n' "$transaction_id"
     trap - EXIT
+    [ "$prior_spawn_lock_held" = 0 ] || fm_lock_release "$prior_spawn_lock"
     [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
     fm_lock_release "$claim_lock"
     fm_lock_release "$attempt_lock"
@@ -1871,10 +2009,12 @@ cmd_escalate() {
     || ! sync_state_directory; then
     die "failed to make pending escalation durable before commit"
   fi
-  ensure_meta_field "$prior_meta" escalated_from "$(profile_display "$escalated_from_value")" \
+  ensure_meta_field "$prior_meta" escalated_from "$from_display" \
     || die "failed to write prior escalation marker"
-  ensure_meta_field "$new_meta" escalated_from "$(profile_display "$escalated_from_value")" \
+  ensure_meta_field "$new_meta" escalated_from "$from_display" \
     || die "failed to write new escalation marker"
+  ensure_meta_field "$new_meta" escalated_prior_id "$prior_id" \
+    || die "failed to write new escalation prior-id binding"
 
   if ! outcome_recorded "$prior_id" "$prior_generation" "$metrics_note"; then
     if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
@@ -1882,14 +2022,22 @@ cmd_escalate() {
       die "failed to record escalated outcome for $prior_id; pending transaction remains"
     fi
   fi
-  remove_transaction_files "$pending_path" "$claim_path" \
-    || die "escalation committed but transaction records could not be removed"
+  if ! remove_transaction_files "$pending_path" "$claim_path"; then
+    # Markers and outcome may already be durable while a late directory fsync
+    # fails. If the journal is gone and linkage is complete, succeed idempotently.
+    if escalation_commit_settled "$prior_meta" "$new_meta" "$from_display" \
+      "$prior_id" "$prior_generation" "$metrics_note" "$pending_path" "$claim_path"; then
+      :
+    else
+      die "escalation committed but transaction records could not be removed"
+    fi
+  fi
 
   printf 'verdict=escalated\n'
   printf 'prior_id=%s\n' "$prior_id"
-  printf 'prior_profile=%s\n' "$(profile_display "$escalated_from_value")"
+  printf 'prior_profile=%s\n' "$from_display"
   printf 'target_profile=%s\n' "$(profile_display "$target_profile")"
-  printf 'escalated_from=%s\n' "$(profile_display "$escalated_from_value")"
+  printf 'escalated_from=%s\n' "$from_display"
   [ -n "$new_id" ] && printf 'new_id=%s\n' "$new_id"
   printf 'outcome=escalated\n'
   printf 'note=%s\n' "$metrics_note"
@@ -1898,6 +2046,8 @@ cmd_escalate() {
   printf 'metrics.standing_profile_only=yes\n'
   printf 'metrics.blocked_vs_escalated=escalated\n'
   trap - EXIT
+  [ "$decision_log_lock_held" = 0 ] || fm_lock_release "$decision_log_lock"
+  [ "$prior_spawn_lock_held" = 0 ] || fm_lock_release "$prior_spawn_lock"
   [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
   fm_lock_release "$claim_lock"
   fm_lock_release "$attempt_lock"

@@ -132,9 +132,13 @@ fm_lock_try_acquire "$TEARDOWN_TASK_LOCK" || {
 }
 TEARDOWN_TASK_LOCK_HELD=1
 TEARDOWN_HERDR_LOCK_RECORDS=
+# Guard Herdr release: teardown_release_herdr_locks is defined later. An early
+# EXIT (before that definition) must still release the task lifecycle lock.
 teardown_release_all_locks() {
-  teardown_release_herdr_locks
-  if [ "$TEARDOWN_TASK_LOCK_HELD" = 1 ]; then
+  if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
+    teardown_release_herdr_locks
+  fi
+  if [ "${TEARDOWN_TASK_LOCK_HELD:-0}" = 1 ]; then
     TEARDOWN_TASK_LOCK_HELD=0
     fm_lock_release "$TEARDOWN_TASK_LOCK" || true
   fi
