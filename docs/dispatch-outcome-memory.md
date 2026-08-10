@@ -69,10 +69,13 @@ The possible verdicts are `escalate`, `refuse`, and `uncertain`.
 Incomplete or ambiguous durable evidence returns `uncertain` and never silently escalates.
 Dead endpoints remain the responsibility of stuck-worker recovery.
 
+Reserve and commit acquire the prior and follow-on task lifecycle/spawn locks together, in deterministic task-id order, before reading either task's metadata, so a concurrent teardown cannot delete prior metadata mid-transaction.
+Reserve additionally selects the latest durable classify decision and publishes the reservation under the classify decision-log lock, so a concurrent classify cannot leave the reservation bound to a stale `escalate` decision after a newer refusal has already been logged.
 The reserve path persists the validated source, target, and follow-on id without changing either task record or the ending log.
 The reservation returns `reservation_id`; pass it to `fm-spawn.sh --escalation-reservation` for the follow-on.
-The commit path verifies that reservation identity plus the follow-on harness, model, and effort against the reserved target, writes `escalated_from=` durably to both task records, then records the prior outcome as `escalated`.
+The commit path verifies that reservation identity plus the follow-on harness, model, and effort against the reserved target, writes `escalated_from=` durably to both task records plus `escalated_prior_id=` on the follow-on record, then records the prior outcome as `escalated`.
 It uses a recoverable pending transaction and global follow-on-id claim so a failed apply can be retried without duplicating or misattributing linkage.
+If markers, the escalated outcome, and the transaction journal are already fully durable when a retry runs (for example, a prior commit died only because a late directory fsync failed after all linkage was written), a retried commit succeeds idempotently instead of refusing.
 It refuses arbitrary targets, unreserved commits, mismatched or missing follow-on metadata, concurrent duplicate apply attempts, and any second apply after linkage exists.
 
 ## Classify decision log
