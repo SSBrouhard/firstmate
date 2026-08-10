@@ -1550,7 +1550,7 @@ if [ "$KIND" != secondmate ] && [ -x "$SCRIPT_DIR/fm-dispatch-outcome.sh" ]; the
   fi
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
     "$SCRIPT_DIR/fm-dispatch-outcome.sh" record "$ID" \
-    --outcome "$_fm_dispatch_outcome" --note "$_fm_dispatch_note" >/dev/null 2>&1 || true
+    --outcome "$_fm_dispatch_outcome" --note "$_fm_dispatch_note" --once >/dev/null 2>&1 || true
   unset _fm_dispatch_outcome _fm_dispatch_note
 fi
 

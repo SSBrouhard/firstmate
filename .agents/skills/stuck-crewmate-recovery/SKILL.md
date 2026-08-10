@@ -47,3 +47,9 @@ Escalate in order:
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
    The worktree and commits persist, so relaunch is cheap.
 5. If a second relaunch fails too, write `failed` to the backlog and tell the captain the plain failure, preserved work, and consequence using `AGENTS.md` section 9; do not mention metadata, harness, window, or worktree unless the path itself is needed for action.
+
+## Capability-stuck measurement
+
+When the same acceptance failure survives the real fix threshold after this recovery procedure is exhausted, use `fm-dispatch-outcome.sh suggest` as historical context and pass the durable evidence to `fm-stuck-classify.sh classify`.
+Only an `escalate` verdict proceeds: use `resolve-stronger`, reserve the returned target before the normal spawn, then commit the linkage after the follow-on task record matches that target.
+The full evidence, strength, transaction, and anti-thrash contract is owned by `docs/dispatch-outcome-memory.md` and the scripts' help output.

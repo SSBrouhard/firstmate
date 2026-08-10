@@ -11,7 +11,7 @@
 # Override with FM_DISPATCH_OUTCOMES or --log <path>.
 #
 # Commands:
-#   record <id> --outcome <done|failed|escalated|blocked> [--note "..."]
+#   record <id> --outcome <done|failed|escalated|blocked> [--note "..."] [--once]
 #       Append one JSON line. Pulls harness/model/effort/kind/mode/project and
 #       optional escalated_from from state/<id>.meta when present. Missing meta
 #       is allowed (fields empty) so firstmate can still log a known ending.
@@ -122,12 +122,140 @@ acquire_log_lock() {
   return 1
 }
 
+append_outcome_record() {
+  local path=$1 line=$2 once=$3
+  command -v perl >/dev/null 2>&1 || return 1
+  perl - "$path" "$line" "$once" <<'PERL'
+use strict;
+use warnings;
+use Errno qw(ENOENT);
+use Fcntl qw(:DEFAULT);
+use File::Basename qw(dirname);
+use IO::Handle ();
+use JSON::PP ();
+
+my ($path, $line, $once) = @ARGV;
+defined $path && defined $line && defined $once or exit 1;
+$line !~ /[\r\n]/ or exit 1;
+my $record = eval { JSON::PP::decode_json($line) } or exit 1;
+my $pending_path = "$path.pending";
+my $pending_tmp = "$pending_path.$$";
+sysopen(my $parent, dirname($path), O_RDONLY | O_DIRECTORY) or exit 1;
+
+sub read_all {
+  my ($fh) = @_;
+  seek($fh, 0, 0) or return;
+  local $/;
+  my $content = <$fh>;
+  return defined $content ? $content : '';
+}
+
+sub write_all {
+  my ($fh, $content) = @_;
+  my $written = 0;
+  while ($written < length($content)) {
+    my $count = syswrite($fh, $content, length($content) - $written, $written);
+    return 0 if !defined $count || $count == 0;
+    $written += $count;
+  }
+  return 1;
+}
+
+sub valid_stream {
+  my ($content) = @_;
+  return 1 if $content eq '';
+  return 0 if substr($content, -1) ne "\n";
+  my @lines = split /\n/, $content, -1;
+  pop @lines;
+  for my $item (@lines) {
+    return 0 if $item eq '';
+    eval { JSON::PP::decode_json($item); 1 } or return 0;
+  }
+  return 1;
+}
+
+sub sync_handle {
+  my ($fh) = @_;
+  return defined $fh->sync();
+}
+
+my $file;
+if (!sysopen($file, $path, O_RDWR | O_APPEND | O_NOFOLLOW)) {
+  $! == ENOENT or exit 1;
+  sysopen($file, $path, O_RDWR | O_APPEND | O_CREAT | O_EXCL | O_NOFOLLOW, 0600) or exit 1;
+}
+my @path_stat = lstat($path) or exit 1;
+my @file_stat = stat($file) or exit 1;
+-f $file or exit 1;
+$path_stat[0] == $file_stat[0] && $path_stat[1] == $file_stat[1] && $file_stat[3] == 1 or exit 1;
+
+my $content = read_all($file);
+defined $content or exit 1;
+my $pending;
+if (sysopen($pending, $pending_path, O_RDONLY | O_NOFOLLOW)) {
+  my $pending_content = read_all($pending);
+  defined $pending_content or exit 1;
+  my $break = index($pending_content, "\n");
+  $break > 0 or exit 1;
+  my $start_text = substr($pending_content, 0, $break);
+  $start_text =~ /\A\d+\z/ or exit 1;
+  my $start = 0 + $start_text;
+  my $payload = substr($pending_content, $break + 1);
+  $payload =~ /\A[^\r\n]+\n\z/ or exit 1;
+  eval { JSON::PP::decode_json(substr($payload, 0, -1)); 1 } or exit 1;
+  $start <= length($content) or exit 1;
+  my $prefix = substr($content, 0, $start);
+  valid_stream($prefix) or exit 1;
+  my $suffix = substr($content, $start);
+  index($payload, $suffix) == 0 or exit 1;
+  if (length($suffix) < length($payload)) {
+    truncate($file, $start) or exit 1;
+    seek($file, 0, 2) or exit 1;
+    write_all($file, $payload) && sync_handle($file) or exit 1;
+  }
+  unlink($pending_path) or exit 1;
+  sync_handle($parent) or exit 1;
+  $content = read_all($file);
+  defined $content or exit 1;
+} elsif ($! != ENOENT) {
+  exit 1;
+}
+
+valid_stream($content) or exit 1;
+if ($once ne '0') {
+  for my $item (split /\n/, $content) {
+    next if $item eq '';
+    my $existing = eval { JSON::PP::decode_json($item) } or exit 1;
+    if (($existing->{id} // '') eq ($record->{id} // '') &&
+        ($existing->{outcome} // '') eq ($record->{outcome} // '') &&
+        ($existing->{note} // '') eq ($record->{note} // '')) {
+      exit 0;
+    }
+  }
+}
+
+my $payload = "$line\n";
+my $start = length($content);
+sysopen(my $pending_writer, $pending_tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600) or exit 1;
+write_all($pending_writer, "$start\n$payload") && sync_handle($pending_writer) && close($pending_writer) or exit 1;
+rename($pending_tmp, $pending_path) or exit 1;
+sync_handle($parent) or exit 1;
+seek($file, 0, 2) or exit 1;
+write_all($file, $payload) && sync_handle($file) or exit 1;
+my $after = read_all($file);
+defined $after && valid_stream($after) or exit 1;
+substr($after, -length($payload)) eq $payload or exit 1;
+unlink($pending_path) or exit 1;
+sync_handle($parent) or exit 1;
+PERL
+}
+
 tsv_safe() {
   printf '%s' "$1" | tr '\t\r\n' '   '
 }
 
 cmd_record() {
-  local id='' outcome='' note=''
+  local id='' outcome='' note='' once=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --outcome)
@@ -146,6 +274,10 @@ cmd_record() {
         ;;
       --note=*)
         note=${1#--note=}
+        shift
+        ;;
+      --once)
+        once=1
         shift
         ;;
       --log)
@@ -223,7 +355,7 @@ cmd_record() {
     log_err "unable to acquire outcome log lock at $lock"
     return 1
   fi
-  if ! printf '%s\n' "$line" >>"$LOG_PATH"; then
+  if ! append_outcome_record "$LOG_PATH" "$line" "$once"; then
     fm_lock_release "$lock" || true
     log_err "unable to append outcome to $LOG_PATH"
     return 1

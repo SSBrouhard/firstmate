@@ -7,21 +7,35 @@ CLASSIFIER="$ROOT/bin/fm-stuck-classify.sh"
 OUTCOME="$ROOT/bin/fm-dispatch-outcome.sh"
 CORPUS="$ROOT/tests/fixtures/stuck-policy-conformance-v1.json"
 SAFE_PATH=${PATH:-/usr/bin:/bin}
-COCKPIT_HOME=${FM_L1_COCKPIT_HOME:-${FM_HOME:-$ROOT}}
+REAL_HOME=${HOME:?}
 
 command -v jq >/dev/null 2>&1 || { echo "not ok - jq is required" >&2; exit 1; }
 [ -f "$CORPUS" ] || { echo "not ok - missing frozen scenario corpus" >&2; exit 1; }
+jq -e '
+  .suite == "stuck-policy-conformance-v1" and
+  .policy_threshold == 2 and
+  .label_status == "frozen" and
+  (.scenarios | type) == "array" and
+  (.scenarios | length) > 0 and
+  all(.scenarios[];
+    . as $scenario |
+    ($scenario.id | type) == "string" and ($scenario.id | length) > 0 and
+    ($scenario.stratum | type) == "string" and ($scenario.stratum | length) > 0 and
+    (["yes","no","indeterminate"] | index($scenario.truth_eligible)) != null and
+    (["escalate","refuse","uncertain"] | index($scenario.expected_verdict)) != null and
+    ($scenario.expected_reason | type) == "string" and ($scenario.expected_reason | length) > 0)
+' "$CORPUS" >/dev/null || { echo "not ok - invalid or empty frozen scenario corpus" >&2; exit 1; }
 
 LAB_HOME=$(mktemp -d "${TMPDIR:-/tmp}/fm-stuck-policy-conformance.XXXXXX")
 cleanup() { rm -rf "$LAB_HOME"; }
 trap cleanup EXIT HUP INT TERM
 LAB_HOME=$(cd "$LAB_HOME" && pwd -P)
-COCKPIT_HOME=$(cd "$COCKPIT_HOME" 2>/dev/null && pwd -P) || {
-  echo "not ok - cannot canonicalize the real cockpit home" >&2
+REAL_HOME=$(cd "$REAL_HOME" 2>/dev/null && pwd -P) || {
+  echo "not ok - cannot canonicalize the real home" >&2
   exit 1
 }
-[ "$LAB_HOME" != "$COCKPIT_HOME" ] || {
-  echo "not ok - disposable lab resolves to the real cockpit home" >&2
+[ "$LAB_HOME" != "$REAL_HOME" ] || {
+  echo "not ok - disposable lab resolves to the real home" >&2
   exit 1
 }
 
@@ -36,7 +50,7 @@ REPORT="$LAB_HOME/report.json"
 mkdir -p "$LAB_STATE" "$LAB_DATA" "$LAB_CONFIG" "$LAB_TMP"
 : >"$OBSERVED"
 
-cockpit_signature() {
+real_home_signature() {
   local path rel
   for rel in \
     data/dispatch-outcomes.jsonl \
@@ -45,7 +59,7 @@ cockpit_signature() {
     state/l1-policy-prior.meta \
     state/l1-policy-follow.meta \
     state/.l1-policy-prior.stuck-escalate.pending; do
-    path="$COCKPIT_HOME/$rel"
+    path="$REAL_HOME/$rel"
     if [ -f "$path" ] && [ ! -L "$path" ]; then
       printf '%s\t' "$rel"
       shasum "$path"
@@ -56,19 +70,14 @@ cockpit_signature() {
     fi
   done
 }
-COCKPIT_BEFORE=$(cockpit_signature)
+REAL_HOME_BEFORE=$(real_home_signature)
 
 cat >"$LAB_CONFIG/crew-dispatch.json" <<'JSON'
-{"rules":[{"when":"hard ship","use":{"harness":"codex","model":"gpt-policy","effort":"high"},"why":"hard ship"}]}
+{"rules":[{"when":"complex ship","use":{"harness":"codex","model":"gpt-policy","effort":"high","strength":20}}],"default":{"harness":"codex","model":"gpt-policy","effort":"medium","strength":10}}
 JSON
 cat >"$LAB_CONFIG/no-stronger.json" <<'JSON'
-{"rules":[{"when":"default ship","use":{"harness":"codex","model":"gpt-policy","effort":"medium"},"why":"default ship"}]}
+{"default":{"harness":"codex","model":"gpt-policy","effort":"medium","strength":10}}
 JSON
-cat >"$LAB_HOME/quota-axi" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' '{"providers":[{"provider":"codex","state":{"status":"fresh","stale":false},"windows":[{"percentRemaining":100}]}]}'
-SH
-chmod +x "$LAB_HOME/quota-axi"
 
 run_lab() {
   env -i \
@@ -78,7 +87,6 @@ run_lab() {
     FM_CONFIG_OVERRIDE="$LAB_CONFIG" \
     FM_DISPATCH_OUTCOME_BIN="$OUTCOME" FM_DISPATCH_OUTCOMES="$LAB_OUTCOMES" \
     FM_STUCK_CLASSIFY_LOG="$LAB_DECISIONS" FM_STUCK_CLASSIFY_N=2 \
-    FM_QUOTA_AXI_BIN="$LAB_HOME/quota-axi" \
     "$@"
 }
 
@@ -147,7 +155,6 @@ mode=no-mistakes
 EOF
 }
 write_meta l1-policy-prior medium
-write_meta l1-policy-follow high
 
 if run_lab "$CLASSIFIER" resolve-stronger --from-profile codex/gpt-policy/medium \
   --dispatch "$LAB_CONFIG/no-stronger.json" >/dev/null 2>&1; then
@@ -158,7 +165,7 @@ fi
 before_lines=0
 [ ! -f "$LAB_OUTCOMES" ] || before_lines=$(wc -l <"$LAB_OUTCOMES" | tr -d ' ')
 if run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
-  --new-id l1-policy-missing --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null 2>&1; then
+  --new-id l1-policy-follow --commit --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null 2>&1; then
   echo "not ok - apply failure boundary unexpectedly succeeded" >&2
   stateful_failures=$((stateful_failures + 1))
 fi
@@ -168,7 +175,10 @@ after_lines=0
 ! grep -q '^escalated_from=' "$LAB_STATE/l1-policy-prior.meta" || stateful_failures=$((stateful_failures + 1))
 
 run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
-  --new-id l1-policy-follow --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null
+  --new-id l1-policy-follow --reserve --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null
+write_meta l1-policy-follow high
+run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
+  --new-id l1-policy-follow --commit --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null
 run_lab "$OUTCOME" record l1-policy-follow --outcome 'done' --note 'synthetic terminal follow-on' >/dev/null
 
 linkage_ok=$(jq -s '
@@ -182,16 +192,16 @@ grep -q '^escalated_from=codex/gpt-policy/medium$' "$LAB_STATE/l1-policy-follow.
 
 outcome_lines=$(wc -l <"$LAB_OUTCOMES" | tr -d ' ')
 if run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
-  --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null 2>&1; then
+  --new-id l1-policy-second --reserve --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null 2>&1; then
   echo "not ok - anti-thrash second apply unexpectedly succeeded" >&2
   stateful_failures=$((stateful_failures + 1))
 fi
 [ "$(wc -l <"$LAB_OUTCOMES" | tr -d ' ')" = "$outcome_lines" ] || stateful_failures=$((stateful_failures + 1))
 [ "$(grep -c '^escalated_from=' "$LAB_STATE/l1-policy-prior.meta")" -eq 1 ] || stateful_failures=$((stateful_failures + 1))
 
-COCKPIT_AFTER=$(cockpit_signature)
-if [ "$COCKPIT_BEFORE" != "$COCKPIT_AFTER" ]; then
-  echo "not ok - real cockpit files changed during the disposable lab run" >&2
+REAL_HOME_AFTER=$(real_home_signature)
+if [ "$REAL_HOME_BEFORE" != "$REAL_HOME_AFTER" ]; then
+  echo "not ok - real-home files changed during the disposable lab run" >&2
   stateful_failures=$((stateful_failures + 1))
 fi
 

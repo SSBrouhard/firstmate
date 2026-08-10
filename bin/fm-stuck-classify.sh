@@ -21,24 +21,22 @@
 #       status. Never spawns, never mutates dispatch config, never treats worker
 #       self-report alone as enough.
 #   resolve-stronger --from-profile <h[/m[/e]]> [--dispatch <path>]
-#       Read-only: pick one stronger standing profile from crew-dispatch.json.
-#       Fail-closed
-#       when no standing stronger tier exists. Never invents harness/model/effort.
+#       Read-only: pick the next standing profile with a strictly greater public
+#       strength value. Never invents harness/model/effort.
 #   escalate <prior-id> --target-profile <h[/m[/e]]> [--dispatch <path>]
-#            [--note "..."] [--new-id <id>]
+#            [--note "..."] --new-id <id> --reserve|--commit
 #       Fail-closed apply path for a prior attempt already classified escalate:
 #         1) refuse when prior meta already has escalated_from= (anti-lazy /
 #            thrash cap: no second auto-escalate on the same attempt)
 #         2) verify target_profile is the resolver's stronger standing profile
-#         3) append escalated_from=<prior profile> to prior meta and, if set, the
-#            new task meta (refuse if either field is already set)
-#         4) record outcome escalated via fm-dispatch-outcome.sh on prior-id
-#         5) print audit lines (metrics fields) for false/missed escalate review
+#         3) reserve the linkage before spawning the follow-on worker
+#         4) commit only after follow-on metadata matches the target profile
+#         5) append linkage and record the prior outcome as escalated
 #   help | -h | --help
 #       Print this header.
 #
 # Classify evidence flags (all optional with safe defaults that refuse escalate):
-#   --endpoint-alive yes|no     default no  (dead pane -> recovery, not escalate)
+#   --endpoint-alive yes|no     omitted evidence returns uncertain
 #   --crew-state <state>        working|parked|done|blocked|paused|failed|unknown
 #                               (from fm-crew-state.sh vocabulary)
 #   --failure-class <class>     capability|infra|external-wait|declared-pause|
@@ -63,11 +61,11 @@
 #   refuse    - explicit non-escalate class or missing evidence
 #   uncertain - incomplete evidence; fail safe to operator, not silent escalate
 #
-# Refuse reason codes (stable for metrics):
+# Reason codes (stable for metrics):
 #   dead_endpoint, endpoint_not_alive, parked_operator, validation_advancing,
 #   declared_pause, infra, external_wait, already_escalated, below_threshold,
 #   self_report_only, ambiguous, unknown_crew_state, not_same_failure,
-#   recovery_not_exhausted, terminal_state
+#   recovery_not_exhausted, terminal_state, missing_endpoint_evidence
 #
 # Safety:
 #   - No network.
@@ -98,6 +96,8 @@ DECISION_LOG="${FM_STUCK_CLASSIFY_LOG:-$DATA/stuck-classify-decisions.jsonl}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-crew-dispatch-lib.sh
+. "$SCRIPT_DIR/fm-crew-dispatch-lib.sh"
 usage() {
   awk '
     NR == 1 { next }
@@ -957,7 +957,7 @@ cmd_classify() {
   local fix_attempts='' recovery_exhausted='' self_report_only='' already_escalated=''
   local id='' n_threshold='' as_json=0
 
-  endpoint_alive=no
+  endpoint_alive=unknown
   crew_state=unknown
   failure_class=ambiguous
   same_failure=no
@@ -1117,10 +1117,18 @@ cmd_classify() {
   local verdict=refuse reason='' detail=''
 
   # Explicit non-escalate classes first (ordered, stable reason codes).
-  if [ "$endpoint_alive" != yes ] || [ "$failure_class" = dead-endpoint ]; then
+  if [ "$failure_class" = dead-endpoint ]; then
     verdict=refuse
     reason=dead_endpoint
     detail='endpoint not alive; use stuck recovery, not profile escalate'
+  elif [ "$endpoint_alive" = no ]; then
+    verdict=refuse
+    reason=endpoint_not_alive
+    detail='endpoint not alive; use stuck recovery, not profile escalate'
+  elif [ "$endpoint_alive" != yes ]; then
+    verdict=uncertain
+    reason=missing_endpoint_evidence
+    detail='endpoint liveness evidence is missing; fail safe to operator, not silent escalate'
   elif [ "$already_escalated" = yes ]; then
     verdict=refuse
     reason=already_escalated
@@ -1129,7 +1137,11 @@ cmd_classify() {
     verdict=refuse
     reason=infra
     detail='infrastructure failure; log blocked, do not escalate profile'
-  elif [ "$failure_class" = external-wait ] || [ "$crew_state" = parked ]; then
+  elif [ "$failure_class" = external-wait ]; then
+    verdict=refuse
+    reason=external_wait
+    detail='external process wait; log blocked, do not escalate profile'
+  elif [ "$crew_state" = parked ]; then
     verdict=refuse
     reason=parked_operator
     detail='operator gate, ask-user, merge wait, or external process wait'
@@ -1257,24 +1269,14 @@ list_standing_profiles() {
       if ($value | type) == "array" then $value
       elif ($value | type) == "object" then [$value]
       else [] end;
-    def tier($rule):
-      ((($rule.when // "") + " " + ($rule.why // "")) | ascii_downcase) as $t
-      | if ($t | test("hard ship")) then "hard"
-        elif ($t | test("trivial")) then "trivial"
-        elif ($t | test("scout")) then "scout"
-        elif ($t | test("high-cost")) then "high-cost"
-        elif ($t | test("default ship")) then "default"
-        else "other" end;
-    (.rules // []) | to_entries[] as $entry
-    | $entry.value as $rule
-    | profiles($rule.use)[] as $profile
+    ([.rules[]? | profiles(.use)[]] + [profiles(.default)[]?])[] as $profile
     | select(($profile.harness | type) == "string" and ($profile.harness | length) > 0)
+    | select(($profile.strength | type) == "number")
     | [
         $profile.harness,
         ($profile.model // ""),
         ($profile.effort // ""),
-        tier($rule),
-        (if (($rule.use | type) == "array") then "1" else "0" end)
+        ($profile.strength | tostring)
       ]
     | join("\u001c")
   ' "$file" 2>/dev/null
@@ -1282,39 +1284,7 @@ list_standing_profiles() {
 
 dispatch_profiles_valid() {
   local file=$1
-  jq -e '
-    def profiles($value):
-      if ($value | type) == "array" then $value
-      elif ($value | type) == "object" then [$value]
-      else [] end;
-    def verified($h): ["claude","codex","opencode","pi","pi-signed","grok","kimi"] | index($h);
-    def effort_ok($h; $e):
-      if $e == null then true
-      elif $h == "claude" then ["low","medium","high","xhigh","max"] | index($e)
-      elif $h == "codex" then ["low","medium","high","xhigh"] | index($e)
-      elif $h == "grok" then ["low","medium","high"] | index($e)
-      elif $h == "pi" or $h == "pi-signed" then ["low","medium","high","xhigh","max"] | index($e)
-      elif $h == "opencode" or $h == "kimi" then false
-      else true end;
-    def profile_ok($profile):
-      ($profile | type) == "object"
-      and (($profile.harness? | type) == "string")
-      and (($profile.harness | length) > 0)
-      and (verified($profile.harness) != null)
-      and ((has("model") | not) or (($profile.model | type) == "string" and ($profile.model | length) > 0))
-      and ((has("effort") | not) or (($profile.effort | type) == "string" and ($profile.effort | length) > 0 and effort_ok($profile.harness; $profile.effort) != null and effort_ok($profile.harness; $profile.effort) != false));
-    if (type != "object") or ((.rules? | type) != "array") then false
-    elif ([.rules[] | select(type != "object" or
-      (.when? | type) != "string" or (.when | length) == 0 or
-      ((.use? | type) != "object" and (.use? | type) != "array") or
-      ((.use? | type) == "array" and (.use | length) == 0) or
-      (has("select") and ((.select | type) != "string" or .select != "quota-balanced")))] | length) > 0 then false
-    elif ([.rules[] | profiles(.use)[] | select(profile_ok(.) | not)] | length) > 0 then false
-    elif (has("default") and ((.default | type) != "object" and (.default | type) != "array")) then false
-    elif (has("default") and ((.default | type) == "array" and (.default | length) == 0)) then false
-    elif (has("default") and ([profiles(.default)[] | select(profile_ok(.) | not)] | length) > 0) then false
-    else true end
-  ' "$file" >/dev/null 2>&1
+  fm_crew_dispatch_valid "$file"
 }
 
 profile_parts() {
@@ -1333,94 +1303,6 @@ profile_display() {
   fi
   [ -n "$PROFILE_E" ] && printf '/%s' "$PROFILE_E"
   printf '\n'
-}
-
-profile_provider() {
-  local harness=$1 model=$2
-  case "$harness" in
-    claude|codex|grok)
-      printf '%s\n' "$harness"
-      ;;
-    pi|pi-signed)
-      case "$model" in
-        anthropic/*) printf 'claude\n' ;;
-        openai/*|openai-codex/*) printf 'codex\n' ;;
-        xai/*|grok*) printf 'grok\n' ;;
-        *) return 1 ;;
-      esac
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-QUOTA_JSON=''
-load_quota_json() {
-  local quota_bin=${FM_QUOTA_AXI_BIN:-quota-axi}
-  command -v "$quota_bin" >/dev/null 2>&1 || return 1
-  QUOTA_JSON=$("$quota_bin" --json 2>/dev/null) || return 1
-  printf '%s' "$QUOTA_JSON" | jq -e . >/dev/null 2>&1
-}
-
-quota_score_for_provider() {
-  local provider=$1
-  printf '%s' "$QUOTA_JSON" | jq -er --arg provider "$provider" '
-    [ .providers[]?
-      | select(.provider == $provider)
-      | select((.state.status? == "fresh") and ((.state.stale? // false) == false))
-      | (.windows // [])[]?
-      | .percentRemaining
-    ] as $remaining
-    | select(($remaining | length) > 0)
-    | select(all($remaining[]; type == "number"))
-    | ($remaining | min)
-  ' 2>/dev/null
-}
-
-quota_validate_profiles() {
-  local key provider score
-  for key in "$@"; do
-    profile_parts "$key"
-    provider=$(profile_provider "$PROFILE_H" "$PROFILE_M") || {
-      log_err "quota provider cannot be established for standing profile '$key'"
-      return 1
-    }
-    score=$(quota_score_for_provider "$provider") || {
-      log_err "fresh quota headroom cannot be established for standing profile '$key'"
-      return 1
-    }
-    [ -n "$score" ] || return 1
-  done
-}
-
-quota_choose_profile() {
-  local from_profile=$1
-  shift
-  local -a keys=("$@") scores=() tied=() sorted_keys=()
-  local key provider score max_score='' i seed index
-  [ "${#keys[@]}" -gt 0 ] || return 1
-  for key in "${keys[@]}"; do
-    profile_parts "$key"
-    provider=$(profile_provider "$PROFILE_H" "$PROFILE_M") || return 1
-    score=$(quota_score_for_provider "$provider") || return 1
-    scores+=("$score")
-    if [ -z "$max_score" ] || awk -v a="$score" -v b="$max_score" 'BEGIN { exit !(a > b) }'; then
-      max_score=$score
-    fi
-  done
-  for i in "${!keys[@]}"; do
-    [ "${scores[$i]}" = "$max_score" ] && tied+=("${keys[$i]}")
-  done
-  while IFS= read -r key; do
-    [ -n "$key" ] && sorted_keys+=("$key")
-  done < <(printf '%s\n' "${tied[@]}" | LC_ALL=C sort -u)
-  [ "${#sorted_keys[@]}" -gt 0 ] || return 1
-  if [ "${#sorted_keys[@]}" -eq 1 ]; then
-    printf '%s\n' "${sorted_keys[0]}"
-    return 0
-  fi
-  seed=$(printf '%s\n' "$from_profile" "${sorted_keys[@]}" | cksum | awk '{print $1}')
-  index=$((seed % ${#sorted_keys[@]}))
-  printf '%s\n' "${sorted_keys[$index]}"
 }
 
 cmd_resolve_stronger() {
@@ -1469,39 +1351,32 @@ cmd_resolve_stronger() {
   command -v jq >/dev/null 2>&1 || die "jq required to read standing profiles from $dispatch"
   dispatch_profiles_valid "$dispatch" || die "invalid dispatch profiles: $dispatch"
 
-  local from_rank
-  profile_parts "$from_profile"
-  from_rank=$(effort_rank "$PROFILE_E")
+  local best_key='' from_strength='' best_strength='' h m e strength key
+  local -a best_keys=()
+  while IFS=$'\034' read -r h m e strength || [ -n "${h-}" ]; do
+    [ -n "${h:-}" ] || continue
+    key=$(profile_encode_fields "$h" "$m" "$e")
+    if [ "$key" = "$from_profile" ]; then
+      if [ -z "$from_strength" ]; then
+        from_strength=$strength
+      elif [ "$from_strength" != "$strength" ]; then
+        die "from profile has conflicting explicit strengths in $dispatch"
+      fi
+      continue
+    fi
+  done < <(list_standing_profiles "$dispatch")
 
-  local best_key='' best_tier_rank=0 best_effort_rank=0 h m e tier is_array t_rank e_rank key
-  local -a best_keys=() eligible_keys=()
-  local requires_quota=0
-  while IFS=$'\034' read -r h m e tier is_array || [ -n "${h-}" ]; do
+  [ -n "$from_strength" ] || die "from profile must have one explicit standing strength in $dispatch"
+
+  while IFS=$'\034' read -r h m e strength || [ -n "${h-}" ]; do
     [ -n "${h:-}" ] || continue
     key=$(profile_encode_fields "$h" "$m" "$e")
     [ "$key" = "$from_profile" ] && continue
-    case "$tier" in
-      hard) t_rank=3 ;;
-      high-cost) t_rank=2 ;;
-      default) t_rank=1 ;;
-      *) t_rank=0 ;;
-    esac
-    # Only consider hard or high-cost standing tiers as escalate targets.
-    [ "$t_rank" -ge 2 ] || continue
-    e_rank=$(effort_rank "$e")
-    # Skip clearly weaker effort when the current profile already runs hard effort.
-    if [ "$e_rank" -lt "$from_rank" ] && [ "$from_rank" -ge 3 ]; then
-      continue
-    fi
-    eligible_keys+=("$key")
-    [ "${is_array:-0}" = 1 ] && requires_quota=1
-    if [ "${#best_keys[@]}" -eq 0 ] \
-      || [ "$t_rank" -gt "$best_tier_rank" ] \
-      || { [ "$t_rank" -eq "$best_tier_rank" ] && [ "$e_rank" -gt "$best_effort_rank" ]; }; then
+    [ "$strength" -gt "$from_strength" ] || continue
+    if [ "${#best_keys[@]}" -eq 0 ] || [ "$strength" -lt "$best_strength" ]; then
       best_keys=("$key")
-      best_tier_rank=$t_rank
-      best_effort_rank=$e_rank
-    elif [ "$t_rank" -eq "$best_tier_rank" ] && [ "$e_rank" -eq "$best_effort_rank" ]; then
+      best_strength=$strength
+    elif [ "$strength" -eq "$best_strength" ]; then
       best_keys+=("$key")
     fi
   done < <(list_standing_profiles "$dispatch")
@@ -1515,17 +1390,15 @@ cmd_resolve_stronger() {
     return 1
   fi
 
-  if [ "$requires_quota" -eq 1 ]; then
-    load_quota_json || die "fresh quota output required to resolve profile arrays"
-    quota_validate_profiles "${eligible_keys[@]}" || die "unable to resolve standing profile quotas in $dispatch"
-    best_key=$(quota_choose_profile "$from_profile" "${best_keys[@]}") || die "unable to choose a quota-aware standing profile"
-  else
-    best_key=$(printf '%s\n' "${best_keys[@]}" | LC_ALL=C sort -u | head -n 1)
-  fi
+  best_key=$(printf '%s\n' "${best_keys[@]}" | LC_ALL=C sort -u)
+  [ "$(printf '%s\n' "$best_key" | wc -l | tr -d ' ')" -eq 1 ] \
+    || die "next stronger strength must identify exactly one standing profile in $dispatch"
 
   printf 'verdict=ok\n'
   printf 'from_profile=%s\n' "$(profile_display "$from_profile")"
   printf 'target_profile=%s\n' "$(profile_display "$best_key")"
+  printf 'from_strength=%s\n' "$from_strength"
+  printf 'target_strength=%s\n' "$best_strength"
   printf 'dispatch=%s\n' "$dispatch"
   printf 'note=standing profiles only; re-spawn required (no mid-session model swap)\n'
   return 0
@@ -1567,7 +1440,7 @@ pending_field() {
 }
 
 outcome_recorded() {
-  local log_path=${FM_DISPATCH_OUTCOMES:-$FM_HOME/data/dispatch-outcomes.jsonl} prior_id=$1 note=$2
+  local log_path=${FM_DISPATCH_OUTCOMES:-$DATA/dispatch-outcomes.jsonl} prior_id=$1 note=$2
   [ -f "$log_path" ] || return 1
   jq -e -s \
     --arg prior_id "$prior_id" \
@@ -1586,7 +1459,7 @@ resolve_stronger_target() {
 }
 
 cmd_escalate() {
-  local prior_id='' target_profile='' note='' new_id='' dispatch='' dry_run=0
+  local prior_id='' target_profile='' note='' new_id='' dispatch='' dry_run=0 phase=''
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1630,6 +1503,16 @@ cmd_escalate() {
         dry_run=1
         shift
         ;;
+      --reserve)
+        [ -z "$phase" ] || die "--reserve and --commit are mutually exclusive"
+        phase=reserve
+        shift
+        ;;
+      --commit)
+        [ -z "$phase" ] || die "--reserve and --commit are mutually exclusive"
+        phase=commit
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -1655,6 +1538,10 @@ cmd_escalate() {
   if [ -n "$new_id" ]; then
     fm_task_id_path_safe "$new_id" || die "invalid --new-id '$new_id'"
     [ "$new_id" != "$prior_id" ] || die "--new-id must differ from <prior-id>"
+  fi
+  if [ "$dry_run" -eq 0 ]; then
+    [ -n "$new_id" ] || die "escalate requires --new-id for follow-on linkage"
+    [ -n "$phase" ] || die "escalate requires --reserve before spawn or --commit after spawn"
   fi
 
   local prior_meta="$STATE/$prior_id.meta"
@@ -1700,15 +1587,21 @@ cmd_escalate() {
     [ "$escalated_from_value" = "$prior_profile" ] || die "pending escalation source does not match prior meta"
     note=$pending_note
     [ -z "$existing_ef" ] || [ "$existing_ef" = "$pending_from" ] || die "pending escalation marker does not match its source"
-    resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch")
+    if ! resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch"); then
+      die "pending target is no longer the resolved stronger standing profile"
+    fi
     [ "$resolved_target" = "$target_profile" ] || die "pending target is no longer the resolved stronger standing profile"
+    [ "$phase" != reserve ] || die "escalation is already reserved for $prior_id"
   else
     [ -z "$existing_ef" ] || die "already_escalated: prior meta has escalated_from=$existing_ef (no second auto-escalate)"
-    resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch")
+    if ! resolved_target=$(resolve_stronger_target "$prior_profile" "$dispatch"); then
+      die "no stronger standing profile for prior task $prior_id"
+    fi
     [ "$resolved_target" = "$target_profile" ] || die "target profile is not the resolved stronger standing profile"
+    [ "$phase" != commit ] || die "no reserved escalation exists for $prior_id"
   fi
 
-  if [ -n "$new_id" ]; then
+  if [ "$phase" = commit ]; then
     new_meta="$STATE/$new_id.meta"
     [ -f "$new_meta" ] && [ ! -L "$new_meta" ] || die "new meta not found or unsafe: $new_meta"
     [ -w "$new_meta" ] || die "new meta is not writable: $new_meta"
@@ -1719,6 +1612,11 @@ cmd_escalate() {
     else
       [ -z "$new_existing_ef" ] || die "new meta already has escalated_from= (refuse thrash / double-write)"
     fi
+    [ "$(profile_from_meta "$new_meta")" = "$target_profile" ] \
+      || die "new meta profile does not match --target-profile"
+  elif [ "$phase" = reserve ]; then
+    [ ! -e "$STATE/$new_id.meta" ] && [ ! -L "$STATE/$new_id.meta" ] \
+      || die "reserve requires a not-yet-spawned --new-id"
   fi
   [ -w "$prior_meta" ] || die "prior meta is not writable: $prior_meta"
 
@@ -1745,21 +1643,27 @@ cmd_escalate() {
 
   [ -x "$OUTCOME_BIN" ] || [ -f "$OUTCOME_BIN" ] || die "outcome helper missing: $OUTCOME_BIN"
 
-  if [ "$pending_exists" -eq 0 ]; then
+  if [ "$phase" = reserve ]; then
     write_pending_escalation "$pending_path" "$prior_id" "$escalated_from_value" "$target_profile" "$new_id" "$note" \
       || die "failed to create pending escalation record"
+    printf 'verdict=reserved\n'
+    printf 'prior_id=%s\n' "$prior_id"
+    printf 'prior_profile=%s\n' "$(profile_display "$escalated_from_value")"
+    printf 'target_profile=%s\n' "$(profile_display "$target_profile")"
+    printf 'new_id=%s\n' "$new_id"
+    trap - EXIT
+    fm_lock_release "$attempt_lock"
+    return 0
   fi
 
   ensure_meta_field "$prior_meta" escalated_from "$(profile_display "$escalated_from_value")" \
     || die "failed to write prior escalation marker"
-  if [ -n "$new_id" ]; then
-    ensure_meta_field "$new_meta" escalated_from "$(profile_display "$escalated_from_value")" \
-      || die "failed to write new escalation marker"
-  fi
+  ensure_meta_field "$new_meta" escalated_from "$(profile_display "$escalated_from_value")" \
+    || die "failed to write new escalation marker"
 
   if ! outcome_recorded "$prior_id" "$metrics_note"; then
-    if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-      "$OUTCOME_BIN" record "$prior_id" --outcome escalated --note "$metrics_note"; then
+    if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+      "$OUTCOME_BIN" record "$prior_id" --outcome escalated --note "$metrics_note" --once; then
       die "failed to record escalated outcome for $prior_id; pending transaction remains"
     fi
   fi

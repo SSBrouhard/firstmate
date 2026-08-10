@@ -44,9 +44,9 @@ Firstmate may re-run a task with one stronger standing profile when all of the f
 - The task has not already received an automatic escalation.
 
 The threshold is configurable through `--n` or `FM_STUCK_CLASSIFY_N`.
-A stronger target must already exist in the active `config/crew-dispatch.json` and must satisfy the normal dispatch-profile authority rules.
+A stronger target must already exist in the active `config/crew-dispatch.json`, carry a strictly greater public `strength` value than the current standing profile, and be the only profile at the next greater strength.
 The helper never invents a model, runtime, or effort tier.
-A profile-array target uses current quota evidence under the existing dispatch selection contract.
+Equal-strength harness, model, or effort changes are lateral and never qualify for automatic escalation.
 
 One escalation is the hard automatic limit for a task attempt.
 A further profile escalation requires an operator decision rather than another automatic restart.
@@ -61,15 +61,17 @@ Worker self-report without failed-acceptance evidence is never sufficient.
 | --- | --- |
 | `classify` | Produce a pure evidence decision and stable reason code |
 | `resolve-stronger --from-profile <h[/m[/e]]>` | Select one stronger standing profile without changing configuration |
-| `escalate <prior-id> --target-profile ...` | Verify and persist one audit-linked escalation transaction |
+| `escalate <prior-id> --target-profile ... --new-id ... --reserve` | Reserve validated linkage before spawning the follow-on |
+| `escalate <prior-id> --target-profile ... --new-id ... --commit` | Commit linkage after follow-on metadata matches the target |
 
 The possible verdicts are `escalate`, `refuse`, and `uncertain`.
 Incomplete or ambiguous durable evidence returns `uncertain` and never silently escalates.
 Dead endpoints remain the responsibility of stuck-worker recovery.
 
-The apply path writes `escalated_from=` to the prior task metadata and optional follow-on metadata, then records the prior outcome as `escalated`.
+The reserve path persists the validated source, target, and follow-on id without changing either task record or the ending log.
+The commit path verifies the follow-on harness, model, and effort against the reserved target, writes `escalated_from=` to both task records, then records the prior outcome as `escalated`.
 It uses a recoverable pending transaction so a failed outcome append can be retried without duplicating linkage.
-It refuses arbitrary targets, missing follow-on metadata, concurrent duplicate apply attempts, and any second apply after linkage exists.
+It refuses arbitrary targets, unreserved commits, mismatched or missing follow-on metadata, concurrent duplicate apply attempts, and any second apply after linkage exists.
 
 ## Classify decision log
 

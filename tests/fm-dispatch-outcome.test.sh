@@ -167,6 +167,26 @@ test_concurrent_records_do_not_interleave() {
   pass "fm-dispatch-outcome.sh: concurrent records serialize append"
 }
 
+test_record_recovers_pending_partial_append() {
+  local pending_line='{"id":"recovered","outcome":"done","note":"pending"}'
+  printf '%s' "${pending_line%????????}" >"$LOG_PATH"
+  printf '0\n%s\n' "$pending_line" >"$LOG_PATH.pending"
+  run_oc record after-recovery --outcome failed --note after >/dev/null
+  [ ! -e "$LOG_PATH.pending" ] || fail "recovered append left its pending record"
+  jq -s -e 'length == 2 and .[0].id == "recovered" and .[1].id == "after-recovery"' \
+    "$LOG_PATH" >/dev/null || fail "pending partial append was not recovered into valid JSONL"
+  pass "fm-dispatch-outcome.sh: pending partial append recovers before the next record"
+}
+
+test_record_once_is_idempotent_under_lock() {
+  rm -f "$LOG_PATH" "$LOG_PATH.pending"
+  run_oc record teardown-id --outcome done --note teardown --once >/dev/null
+  run_oc record teardown-id --outcome done --note teardown --once >/dev/null
+  [ "$(wc -l <"$LOG_PATH" | tr -d ' ')" -eq 1 ] \
+    || fail "--once appended a duplicate ending"
+  pass "fm-dispatch-outcome.sh: --once deduplicates an ending under the log lock"
+}
+
 test_suggest_decodes_escaped_fields() {
   rm -f "$LOG_PATH"
   cat >"$STATE_DIR/escaped.meta" <<'EOF'
@@ -261,6 +281,8 @@ test_record_from_meta
 test_record_without_meta
 test_record_escapes_note
 test_concurrent_records_do_not_interleave
+test_record_recovers_pending_partial_append
+test_record_once_is_idempotent_under_lock
 test_suggest_decodes_escaped_fields
 test_suggest_sanitizes_tsv_fields
 test_show_and_suggest

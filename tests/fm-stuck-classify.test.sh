@@ -16,37 +16,24 @@ CONFIG_DIR="$HOME_DIR/config"
 LOG_PATH="$DATA_DIR/dispatch-outcomes.jsonl"
 DECISION_LOG_PATH="$DATA_DIR/stuck-classify-decisions.jsonl"
 DISPATCH_PATH="$CONFIG_DIR/crew-dispatch.json"
-QUOTA_BIN="$TMP_ROOT/quota-axi"
 mkdir -p "$STATE_DIR" "$DATA_DIR" "$CONFIG_DIR"
 
-cat >"$QUOTA_BIN" <<'SH'
-#!/usr/bin/env bash
-claude=80
-codex=60
-grok=70
-if [ "${FM_TEST_QUOTA_MODE:-}" = codex-wins ]; then
-  claude=60
-  codex=80
-fi
-printf '{"providers":[{"provider":"claude","state":{"status":"fresh","stale":false},"windows":[{"percentRemaining":%s}]},{"provider":"codex","state":{"status":"fresh","stale":false},"windows":[{"percentRemaining":%s}]},{"provider":"grok","state":{"status":"fresh","stale":false},"windows":[{"percentRemaining":%s}]}]}\n' "$claude" "$codex" "$grok"
-SH
-chmod +x "$QUOTA_BIN"
 cat >"$DISPATCH_PATH" <<'JSON'
-{"rules":[{"when":"big hard ship","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced","why":"hard ship"}]}
+{"rules":[{"when":"complex ship","use":{"harness":"claude","model":"claude-sonnet-5","effort":"high","strength":20}}],"default":{"harness":"codex","model":"gpt-5.5","effort":"medium","strength":10}}
 JSON
 
 run_sc() {
   FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$STATE_DIR" FM_DATA_OVERRIDE="$DATA_DIR" \
     FM_CONFIG_OVERRIDE="$CONFIG_DIR" FM_DISPATCH_OUTCOMES="$LOG_PATH" \
     FM_STUCK_CLASSIFY_LOG="${TEST_DECISION_LOG:-$DECISION_LOG_PATH}" \
-    FM_DISPATCH_OUTCOME_BIN="${TEST_OUTCOME_BIN:-$OUTCOME}" FM_QUOTA_AXI_BIN="$QUOTA_BIN" \
+    FM_DISPATCH_OUTCOME_BIN="${TEST_OUTCOME_BIN:-$OUTCOME}" \
     "$CLASSIFY" "$@"
 }
 
 run_sc_default_home() {
   local home=$1 state=$2 config=$3
   FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
-    FM_CONFIG_OVERRIDE="$config" FM_DISPATCH_OUTCOME_BIN="$OUTCOME" FM_QUOTA_AXI_BIN="$QUOTA_BIN" \
+    FM_CONFIG_OVERRIDE="$config" FM_DISPATCH_OUTCOME_BIN="$OUTCOME" \
     env -u FM_STUCK_CLASSIFY_LOG -u FM_DATA_OVERRIDE "$CLASSIFY" "${@:4}"
 }
 
@@ -99,7 +86,7 @@ test_classify_refuses_dead_endpoint() {
   out=$(run_sc classify --endpoint-alive no --failure-class capability \
     --same-failure yes --fix-attempts 5 --recovery-exhausted yes)
   assert_contains "$out" "verdict=refuse" "dead endpoint must refuse"
-  assert_contains "$out" "reason=dead_endpoint" "dead endpoint reason code"
+  assert_contains "$out" "reason=endpoint_not_alive" "dead endpoint reason code"
   pass "fm-stuck-classify.sh: refuses dead endpoint"
 }
 
@@ -189,6 +176,24 @@ test_classify_uncertain_unknown_crew_state() {
   pass "fm-stuck-classify.sh: uncertain on unknown durable crew state"
 }
 
+test_classify_uncertain_missing_endpoint_evidence() {
+  local out
+  out=$(run_sc classify --crew-state working --failure-class capability \
+    --same-failure yes --fix-attempts 5 --recovery-exhausted yes)
+  assert_contains "$out" "verdict=uncertain" "missing endpoint evidence must abstain"
+  assert_contains "$out" "reason=missing_endpoint_evidence" "missing endpoint reason"
+  pass "fm-stuck-classify.sh: uncertain when endpoint evidence is missing"
+}
+
+test_classify_refuses_external_wait() {
+  local out
+  out=$(run_sc classify --endpoint-alive yes --crew-state working \
+    --failure-class external-wait --same-failure yes --fix-attempts 5 --recovery-exhausted yes)
+  assert_contains "$out" "verdict=refuse" "external wait must refuse"
+  assert_contains "$out" "reason=external_wait" "external wait reason"
+  pass "fm-stuck-classify.sh: emits reachable external-wait reason"
+}
+
 test_classify_escalates_capability_stuck() {
   local out
   out=$(run_sc classify --endpoint-alive yes --crew-state working \
@@ -204,7 +209,7 @@ test_classify_json_shape() {
   local out
   out=$(run_sc classify --json --endpoint-alive no)
   assert_contains "$out" '"verdict":"refuse"' "json verdict"
-  assert_contains "$out" '"reason":"dead_endpoint"' "json reason"
+  assert_contains "$out" '"reason":"endpoint_not_alive"' "json reason"
   assert_contains "$out" '"n_threshold":' "json n_threshold for metrics"
   pass "fm-stuck-classify.sh: --json emits metrics fields"
 }
@@ -256,7 +261,7 @@ test_classify_log_repairs_missing_final_newline() {
   local log="$TMP_ROOT/classify-no-final-newline.jsonl"
   printf '%s' '{"sentinel":"prior"}' >"$log"
   TEST_DECISION_LOG="$log" run_sc classify --endpoint-alive no >/dev/null
-  jq -s -e 'length == 2 and .[0].sentinel == "prior" and .[1].reason == "dead_endpoint"' \
+  jq -s -e 'length == 2 and .[0].sentinel == "prior" and .[1].reason == "endpoint_not_alive"' \
     "$log" >/dev/null || fail "classify log must keep JSONL records separate"
   pass "fm-stuck-classify.sh: missing final newline is repaired before append"
 }
@@ -309,7 +314,7 @@ test_classify_log_serializes_concurrent_appends() {
   for pid in $pids; do
     wait "$pid" || fail "concurrent classify call failed"
   done
-  jq -s -e 'length == 8 and (map(.id) | unique | length == 8) and all(.[]; .reason == "dead_endpoint")' "$log" >/dev/null \
+  jq -s -e 'length == 8 and (map(.id) | unique | length == 8) and all(.[]; .reason == "endpoint_not_alive")' "$log" >/dev/null \
     || fail "concurrent classify appends must remain complete JSONL records"
   pass "fm-stuck-classify.sh: concurrent decision appends remain serialized"
 }
@@ -368,7 +373,7 @@ test_classify_log_recovers_stale_lock_directories() {
   touch -t 200001010000 "$lock" 2>/dev/null || fail "could not age stale decision lock directory"
   out=$(FM_LOCK_STALE_AFTER=0 TEST_DECISION_LOG="$log" run_sc classify --endpoint-alive no 2>&1)
   assert_not_contains "$out" "decision log append failed" "stale decision lock directory must be reclaimed"
-  jq -s -e 'length == 2 and .[0].sentinel == "prior" and .[1].reason == "dead_endpoint"' \
+  jq -s -e 'length == 2 and .[0].sentinel == "prior" and .[1].reason == "endpoint_not_alive"' \
     "$log" >/dev/null || fail "stale decision lock directory blocked append"
   [ ! -e "$lock" ] && [ ! -L "$lock" ] || fail "stale decision lock directory remained"
 
@@ -379,7 +384,7 @@ test_classify_log_recovers_stale_lock_directories() {
   rm -rf "$owner"
   out=$(FM_LOCK_STALE_AFTER=0 TEST_DECISION_LOG="$owner_log" run_sc classify --endpoint-alive no 2>&1)
   assert_not_contains "$out" "decision log append failed" "stale missing-owner lock must be reclaimed"
-  jq -s -e 'length == 2 and .[0].sentinel == "prior" and .[1].reason == "dead_endpoint"' \
+  jq -s -e 'length == 2 and .[0].sentinel == "prior" and .[1].reason == "endpoint_not_alive"' \
     "$owner_log" >/dev/null || fail "stale missing-owner lock blocked append"
   [ ! -e "$owner_lock" ] && [ ! -L "$owner_lock" ] || fail "stale missing-owner lock remained"
   pass "fm-stuck-classify.sh: stale lock directories reach shared recovery"
@@ -409,7 +414,7 @@ test_classify_relative_log_path_is_canonicalized() {
   out=$(cat "$output")
   expect_code 0 "$rc" "relative decision-log path must classify successfully"
   assert_not_contains "$out" "decision log append failed" "relative decision-log path must append"
-  jq -e '.reason == "dead_endpoint"' "$TMP_ROOT/classify-relative.jsonl" >/dev/null \
+  jq -e '.reason == "endpoint_not_alive"' "$TMP_ROOT/classify-relative.jsonl" >/dev/null \
     || fail "relative decision-log path did not append a valid record"
   pass "fm-stuck-classify.sh: relative decision-log paths are bounded and canonical"
 }
@@ -528,7 +533,7 @@ test_classify_default_log_accepts_symlinked_active_home() {
   ln -s "$target" "$link"
   run_sc_default_home "$link" "$target/state" "$target/config" classify --id symlink-home --endpoint-alive no >/dev/null
   [ -f "$target/data/stuck-classify-decisions.jsonl" ] || fail "symlinked active home lost its default decision log"
-  jq -e '.id == "symlink-home" and .reason == "dead_endpoint"' \
+  jq -e '.id == "symlink-home" and .reason == "endpoint_not_alive"' \
     "$target/data/stuck-classify-decisions.jsonl" >/dev/null || fail "symlinked active home log was malformed"
   pass "fm-stuck-classify.sh: absolute symlinked active homes resolve safely"
 }
@@ -557,31 +562,44 @@ test_resolve_stronger_from_standing_fixture() {
   local out rc
   out=$(run_sc resolve-stronger --from-profile codex/gpt-5.5/medium \
     --dispatch "$DISPATCH_PATH"); rc=$?
-  expect_code 0 "$rc" "resolve-stronger should find hard-ship target"
+  expect_code 0 "$rc" "resolve-stronger should find next-strength target"
   assert_contains "$out" "verdict=ok" "resolve ok"
   assert_contains "$out" "target_profile=" "target profile present"
   assert_contains "$out" "from_profile=codex/gpt-5.5/medium" "from profile echoed"
-  printf '%s\n' "$out" | grep -q 'target_profile=.*high' \
-    || fail "expected a high-effort standing target, got: $out"
-  pass "fm-stuck-classify.sh: resolve-stronger picks standing hard profile"
+  assert_contains "$out" "from_strength=10" "source strength present"
+  assert_contains "$out" "target_strength=20" "target strength present"
+  pass "fm-stuck-classify.sh: resolve-stronger picks the next explicit strength"
 }
 
-test_resolve_stronger_uses_quota_not_array_order() {
-  local out
-  out=$(FM_TEST_QUOTA_MODE=codex-wins run_sc resolve-stronger \
-    --from-profile codex/gpt-5.5/medium --dispatch "$DISPATCH_PATH")
-  assert_contains "$out" "target_profile=codex/gpt-5.5/high" \
-    "quota-aware selection must not choose the first array profile"
-  pass "fm-stuck-classify.sh: resolve-stronger uses quota headroom"
+test_resolve_stronger_uses_explicit_strength_only() {
+  local dispatch="$TMP_ROOT/equal-strength-dispatch.json" out err rc
+  out=$(run_sc resolve-stronger --from-profile codex/gpt-5.5/medium --dispatch "$DISPATCH_PATH")
+  assert_contains "$out" "target_profile=claude/claude-sonnet-5/high" \
+    "explicit next strength must select its standing profile"
+  printf '%s\n' '{"rules":[{"when":"peer","use":{"harness":"claude","model":"claude-sonnet-5","effort":"high","strength":20}}],"default":{"harness":"codex","model":"gpt-5.5","effort":"high","strength":20}}' >"$dispatch"
+  err=$(run_sc resolve-stronger --from-profile claude/claude-sonnet-5/high \
+    --dispatch "$dispatch" 2>&1); rc=$?
+  expect_code 1 "$rc" "equal-strength peer must not count as stronger"
+  assert_contains "$err" "no_stronger_standing" "equal-strength refusal should be explicit"
+  pass "fm-stuck-classify.sh: resolve-stronger requires strictly greater public strength"
 }
 
 test_resolve_stronger_preserves_optional_and_slash_profiles() {
   local dispatch="$TMP_ROOT/optional-dispatch.json" out
-  printf '%s\n' '{"rules":[{"when":"hard ship","use":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"codex"}],"select":"quota-balanced","why":"hard ship"}]}' >"$dispatch"
+  printf '%s\n' '{"rules":[{"when":"complex ship","use":{"harness":"pi","model":"anthropic/claude-sonnet-5","strength":20}}],"default":{"harness":"codex","model":"gpt-5.5","effort":"medium","strength":10}}' >"$dispatch"
   out=$(run_sc resolve-stronger --from-profile codex/gpt-5.5/medium --dispatch "$dispatch")
   assert_contains "$out" "target_profile=pi/anthropic/claude-sonnet-5" \
     "optional fields and slash-containing models must round-trip"
   pass "fm-stuck-classify.sh: preserves optional and slash-containing profiles"
+}
+
+test_resolve_stronger_accepts_default_only_dispatch() {
+  local dispatch="$TMP_ROOT/default-only-dispatch.json" err rc
+  printf '%s\n' '{"default":{"harness":"codex","model":"gpt-5.5","effort":"medium","strength":10}}' >"$dispatch"
+  err=$(run_sc resolve-stronger --from-profile codex/gpt-5.5/medium --dispatch "$dispatch" 2>&1); rc=$?
+  expect_code 1 "$rc" "default-only dispatch should reach normal no-stronger handling"
+  assert_contains "$err" "no_stronger_standing" "default-only config must not fail schema validation"
+  pass "fm-stuck-classify.sh: canonical validator accepts default-only dispatch"
 }
 
 test_resolve_stronger_refuses_missing_dispatch() {
@@ -593,7 +611,21 @@ test_resolve_stronger_refuses_missing_dispatch() {
   pass "fm-stuck-classify.sh: resolve-stronger refuses missing dispatch"
 }
 
-test_escalate_dry_run_and_record() {
+write_strong_meta() {
+  local id=$1 harness=${2:-claude} model=${3:-claude-sonnet-5} effort=${4:-high}
+  cat >"$STATE_DIR/$id.meta" <<EOF
+window=fm-$id
+worktree=/tmp/wt-$id
+project=/tmp/example/projects/sample-project
+harness=$harness
+kind=ship
+mode=no-mistakes
+model=$model
+effort=$effort
+EOF
+}
+
+test_escalate_reserves_then_commits_linkage() {
   write_meta cheap1
   local out rc
   out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
@@ -607,60 +639,53 @@ test_escalate_dry_run_and_record() {
     || fail "dry-run must not write outcome log"
 
   out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
-    --note "same test red after 2 rounds"); rc=$?
-  expect_code 0 "$rc" "escalate record should succeed"
+    --new-id strong1 --reserve --note "same test red after 2 rounds"); rc=$?
+  expect_code 0 "$rc" "reserve should succeed before follow-on spawn"
+  assert_contains "$out" "verdict=reserved" "reserve verdict"
+  [ -f "$STATE_DIR/.cheap1.stuck-escalate.pending" ] || fail "reserve must persist pending linkage"
+  assert_not_contains "$(cat "$STATE_DIR/cheap1.meta")" "escalated_from=" \
+    "reserve must not mark prior before follow-on spawn"
+  [ ! -f "$LOG_PATH" ] || [ ! -s "$LOG_PATH" ] || fail "reserve must not record an ending"
+
+  write_strong_meta strong1
+  out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
+    --new-id strong1 --commit); rc=$?
+  expect_code 0 "$rc" "commit should succeed after matching follow-on spawn"
   assert_contains "$out" "verdict=escalated" "escalated verdict"
   [ -f "$LOG_PATH" ] || fail "outcome log should exist after escalate"
   assert_contains "$(cat "$LOG_PATH")" '"outcome":"escalated"' "log outcome escalated"
   assert_contains "$(cat "$LOG_PATH")" 'stuck_classify escalate' "metrics note in log"
   assert_contains "$(cat "$STATE_DIR/cheap1.meta")" "escalated_from=codex/gpt-5.5/medium" \
     "prior meta must carry durable escalation marker"
-  out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high 2>&1); rc=$?
+  assert_contains "$(cat "$STATE_DIR/strong1.meta")" "escalated_from=codex/gpt-5.5/medium" \
+    "follow-on meta must carry durable linkage"
+  out=$(run_sc escalate cheap1 --target-profile claude/claude-sonnet-5/high \
+    --new-id strong1 --reserve 2>&1); rc=$?
   expect_code 2 "$rc" "marked prior must refuse a second escalation"
   assert_contains "$out" "already_escalated" "prior marker must enforce thrash cap"
-  pass "fm-stuck-classify.sh: escalate dry-run then records escalated outcome"
+  pass "fm-stuck-classify.sh: reserve-before-spawn and commit-after-spawn link escalation"
 }
 
-test_escalate_sets_new_meta_and_refuses_second() {
+test_escalate_rejects_mismatched_follow_on_profile() {
   write_meta cheap2
-  write_meta strong2 "harness=claude" "model=claude-sonnet-5" "effort=high"
-  # clear default harness lines we overwrote partially - rewrite clean strong meta
-  cat >"$STATE_DIR/strong2.meta" <<EOF
-window=fm-strong2
-worktree=/tmp/wt-strong2
-project=/tmp/example/projects/sample-project
-harness=claude
-kind=ship
-mode=no-mistakes
-model=claude-sonnet-5
-effort=high
-EOF
-
-  local out rc
-  out=$(run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high \
-    --new-id strong2); rc=$?
-  expect_code 0 "$rc" "escalate with --new-id should succeed"
-  assert_contains "$out" "new_id=strong2" "new id echoed"
-  assert_contains "$(cat "$STATE_DIR/strong2.meta")" "escalated_from=codex/gpt-5.5/medium" \
-    "new meta must carry escalated_from"
-
-  # thrash cap: prior already has no escalated_from, but classify/escalate on
-  # strong2 must refuse because strong2 now has escalated_from
-  out=$(run_sc classify --id strong2 --endpoint-alive yes --crew-state working \
-    --failure-class capability --same-failure yes --fix-attempts 5 --recovery-exhausted yes)
-  assert_contains "$out" "reason=already_escalated" "strong tier cannot re-escalate"
-
-  local err
-  err=$(run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high 2>&1); rc=$?
-  expect_code 2 "$rc" "second escalate must fail closed"
-  assert_contains "$err" "already_escalated" "second escalate explains thrash cap"
-  pass "fm-stuck-classify.sh: sets escalated_from and refuses second escalate"
+  run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high \
+    --new-id strong2 --reserve >/dev/null
+  write_strong_meta strong2 codex gpt-5.5 high
+  local err rc
+  err=$(run_sc escalate cheap2 --target-profile claude/claude-sonnet-5/high \
+    --new-id strong2 --commit 2>&1); rc=$?
+  expect_code 2 "$rc" "mismatched follow-on profile must refuse"
+  assert_contains "$err" "does not match --target-profile" "profile mismatch should explain refusal"
+  assert_not_contains "$(cat "$STATE_DIR/cheap2.meta")" "escalated_from=" \
+    "profile mismatch must not mutate prior linkage"
+  pass "fm-stuck-classify.sh: commit verifies follow-on harness model and effort"
 }
 
 test_escalate_refuses_arbitrary_target() {
   write_meta cheap4
   local err rc
-  err=$(run_sc escalate cheap4 --target-profile grok/grok-4.5/high 2>&1); rc=$?
+  err=$(run_sc escalate cheap4 --target-profile grok/grok-4.5/high \
+    --new-id strong4 --reserve 2>&1); rc=$?
   expect_code 2 "$rc" "non-resolved target must refuse"
   assert_contains "$err" "resolved stronger standing profile" "arbitrary target explains refusal"
   assert_not_contains "$(cat "$STATE_DIR/cheap4.meta")" "escalated_from=" \
@@ -668,19 +693,19 @@ test_escalate_refuses_arbitrary_target() {
   pass "fm-stuck-classify.sh: refuses arbitrary non-standing target"
 }
 
-test_escalate_validates_new_meta_before_recording() {
+test_escalate_requires_reservation_before_commit() {
   write_meta cheap5
   local before after err rc
   before=$(wc -l <"$LOG_PATH" 2>/dev/null || printf '0')
   err=$(run_sc escalate cheap5 --target-profile claude/claude-sonnet-5/high \
-    --new-id missing5 2>&1); rc=$?
+    --new-id missing5 --commit 2>&1); rc=$?
   after=$(wc -l <"$LOG_PATH" 2>/dev/null || printf '0')
   expect_code 2 "$rc" "missing new meta must refuse"
-  assert_contains "$err" "new meta not found" "missing new meta explains refusal"
+  assert_contains "$err" "no reserved escalation" "missing reservation explains refusal"
   [ "$before" = "$after" ] || fail "missing new meta must not record an escalated outcome"
   assert_not_contains "$(cat "$STATE_DIR/cheap5.meta")" "escalated_from=" \
     "preflight refusal must not write the prior marker"
-  pass "fm-stuck-classify.sh: validates new meta before outcome record"
+  pass "fm-stuck-classify.sh: commit requires a prior reservation"
 }
 
 test_escalate_recovers_pending_transaction() {
@@ -688,51 +713,34 @@ test_escalate_recovers_pending_transaction() {
   local failing="$TMP_ROOT/failing-outcome.sh" err rc out
   printf '#!/usr/bin/env bash\nexit 1\n' >"$failing"
   chmod +x "$failing"
+  run_sc escalate atomic1 --target-profile claude/claude-sonnet-5/high \
+    --new-id atomic1-new --reserve >/dev/null
+  write_strong_meta atomic1-new
   err=$(TEST_OUTCOME_BIN="$failing" run_sc escalate atomic1 \
-    --target-profile claude/claude-sonnet-5/high 2>&1); rc=$?
+    --target-profile claude/claude-sonnet-5/high --new-id atomic1-new --commit 2>&1); rc=$?
   expect_code 2 "$rc" "failed outcome should leave a recoverable transaction"
   assert_contains "$err" "pending transaction remains" "failed outcome must identify pending recovery"
   [ -f "$STATE_DIR/.atomic1.stuck-escalate.pending" ] || fail "pending escalation record missing"
   assert_contains "$(cat "$STATE_DIR/atomic1.meta")" "escalated_from=codex/gpt-5.5/medium" \
     "pending transaction should persist the marker"
-  out=$(run_sc escalate atomic1 --target-profile claude/claude-sonnet-5/high); rc=$?
+  out=$(run_sc escalate atomic1 --target-profile claude/claude-sonnet-5/high \
+    --new-id atomic1-new --commit); rc=$?
   expect_code 0 "$rc" "retry should complete pending escalation"
   assert_contains "$out" "verdict=escalated" "retry should report the completed escalation"
   [ ! -e "$STATE_DIR/.atomic1.stuck-escalate.pending" ] || fail "completed transaction left pending record"
   pass "fm-stuck-classify.sh: recovers marker/outcome transaction"
 }
 
-test_escalate_recovers_pending_new_meta_transaction() {
-  write_meta atomic2
-  write_meta atomic2-new
-  local failing="$TMP_ROOT/failing-new-outcome.sh" err rc out
-  printf '#!/usr/bin/env bash\nexit 1\n' >"$failing"
-  chmod +x "$failing"
-  err=$(TEST_OUTCOME_BIN="$failing" run_sc escalate atomic2 \
-    --target-profile claude/claude-sonnet-5/high --new-id atomic2-new 2>&1); rc=$?
-  expect_code 2 "$rc" "failed new-meta outcome should leave a recoverable transaction"
-  assert_contains "$err" "pending transaction remains" "failed new-meta outcome must identify pending recovery"
-  assert_contains "$(cat "$STATE_DIR/atomic2-new.meta")" "escalated_from=codex/gpt-5.5/medium" \
-    "pending transaction should persist the new marker"
-  out=$(run_sc escalate atomic2 --target-profile claude/claude-sonnet-5/high --new-id atomic2-new); rc=$?
-  expect_code 0 "$rc" "retry should complete the new-meta transaction"
-  assert_contains "$out" "verdict=escalated" "new-meta retry should report completion"
-  pass "fm-stuck-classify.sh: recovers new-meta escalation transaction"
-}
-
 test_escalate_revalidates_pending_target() {
-  local dispatch="$TMP_ROOT/pending-dispatch.json" failing="$TMP_ROOT/failing-revalidate-outcome.sh" err rc
-  printf '%s\n' '{"rules":[{"when":"hard ship","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced","why":"hard ship"}]}' >"$dispatch"
+  local dispatch="$TMP_ROOT/pending-dispatch.json" err rc
+  printf '%s\n' '{"rules":[{"when":"complex ship","use":{"harness":"claude","model":"claude-sonnet-5","effort":"high","strength":20}}],"default":{"harness":"codex","model":"gpt-5.5","effort":"medium","strength":10}}' >"$dispatch"
   write_meta atomic3
-  printf '#!/usr/bin/env bash\nexit 1\n' >"$failing"
-  chmod +x "$failing"
-  err=$(TEST_OUTCOME_BIN="$failing" run_sc escalate atomic3 \
-    --target-profile claude/claude-sonnet-5/high --dispatch "$dispatch" 2>&1); rc=$?
-  expect_code 2 "$rc" "initial failed escalation should create a pending transaction"
+  run_sc escalate atomic3 --target-profile claude/claude-sonnet-5/high \
+    --new-id atomic3-new --reserve --dispatch "$dispatch" >/dev/null
 
-  printf '%s\n' '{"rules":[{"when":"hard ship","use":{"harness":"codex","model":"gpt-5.5","effort":"high"},"why":"hard ship"}]}' >"$dispatch"
+  printf '%s\n' '{"default":{"harness":"codex","model":"gpt-5.5","effort":"medium","strength":10}}' >"$dispatch"
   err=$(run_sc escalate atomic3 --target-profile claude/claude-sonnet-5/high \
-    --dispatch "$dispatch" 2>&1); rc=$?
+    --new-id atomic3-new --commit --dispatch "$dispatch" 2>&1); rc=$?
   expect_code 2 "$rc" "pending target must be revalidated after dispatch changes"
   assert_contains "$err" "pending target is no longer" "dispatch changes must invalidate stale pending targets"
   [ -f "$STATE_DIR/.atomic3.stuck-escalate.pending" ] || fail "stale pending transaction must remain recoverable"
@@ -741,16 +749,19 @@ test_escalate_revalidates_pending_target() {
 
 test_escalate_serializes_concurrent_apply() {
   write_meta race1
+  run_sc escalate race1 --target-profile claude/claude-sonnet-5/high \
+    --new-id race1-new --reserve >/dev/null
+  write_strong_meta race1-new
   local slow rc1 rc2 p1 p2
   slow="$TMP_ROOT/slow-outcome.sh"
   printf '#!/usr/bin/env bash\nsleep 0.2\nexec %q "$@"\n' "$OUTCOME" >"$slow"
   chmod +x "$slow"
   (
-    TEST_OUTCOME_BIN="$slow" run_sc escalate race1 --target-profile claude/claude-sonnet-5/high >"$TMP_ROOT/race1.out" 2>&1
+    TEST_OUTCOME_BIN="$slow" run_sc escalate race1 --target-profile claude/claude-sonnet-5/high --new-id race1-new --commit >"$TMP_ROOT/race1.out" 2>&1
     printf '%s\n' "$?" >"$TMP_ROOT/race1.rc"
   ) & p1=$!
   (
-    TEST_OUTCOME_BIN="$slow" run_sc escalate race1 --target-profile claude/claude-sonnet-5/high >"$TMP_ROOT/race2.out" 2>&1
+    TEST_OUTCOME_BIN="$slow" run_sc escalate race1 --target-profile claude/claude-sonnet-5/high --new-id race1-new --commit >"$TMP_ROOT/race2.out" 2>&1
     printf '%s\n' "$?" >"$TMP_ROOT/race2.rc"
   ) & p2=$!
   wait "$p1" "$p2"
@@ -799,6 +810,8 @@ test_classify_refuses_already_escalated
 test_classify_refuses_below_threshold
 test_classify_uncertain_ambiguous
 test_classify_uncertain_unknown_crew_state
+test_classify_uncertain_missing_endpoint_evidence
+test_classify_refuses_external_wait
 test_classify_escalates_capability_stuck
 test_classify_json_shape
 test_classify_appends_decision_schema
@@ -824,15 +837,15 @@ test_classify_default_log_accepts_symlinked_active_home
 test_classify_has_no_state_side_effect
 test_classify_reads_already_escalated_from_meta
 test_resolve_stronger_from_standing_fixture
-test_resolve_stronger_uses_quota_not_array_order
+test_resolve_stronger_uses_explicit_strength_only
 test_resolve_stronger_preserves_optional_and_slash_profiles
+test_resolve_stronger_accepts_default_only_dispatch
 test_resolve_stronger_refuses_missing_dispatch
-test_escalate_dry_run_and_record
-test_escalate_sets_new_meta_and_refuses_second
+test_escalate_reserves_then_commits_linkage
+test_escalate_rejects_mismatched_follow_on_profile
 test_escalate_refuses_arbitrary_target
-test_escalate_validates_new_meta_before_recording
+test_escalate_requires_reservation_before_commit
 test_escalate_recovers_pending_transaction
-test_escalate_recovers_pending_new_meta_transaction
 test_escalate_revalidates_pending_target
 test_escalate_serializes_concurrent_apply
 test_escalate_refuses_missing_target
