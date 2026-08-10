@@ -72,7 +72,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/data" "$case_dir/config" "$fakebin"
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -160,7 +160,8 @@ write_meta() {
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
-    "mode=$mode"
+    "mode=$mode" \
+    "spawn_generation=gen-task-x1"
 }
 
 # Commit something on the worktree's task branch. Args: case_dir [message]
@@ -493,6 +494,7 @@ run_teardown() {
   local case_dir=$1; shift
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_DATA_OVERRIDE="$case_dir/data" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:$PATH" \
     "$TEARDOWN" task-x1 "$@"
@@ -512,7 +514,10 @@ test_local_only_fork_remote_allows() {
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
-  pass "local-only worktree with HEAD on a fork remote is torn down (fix holds)"
+  jq -e 'select(.id == "task-x1" and .outcome == "done" and .note == "teardown")' \
+    "$case_dir/data/dispatch-outcomes.jsonl" >/dev/null \
+    || fail "fork-allow: teardown did not record the verified done outcome"
+  pass "local-only worktree with HEAD on a fork remote is torn down and measured"
 }
 
 test_teardown_prompts_tasks_axi_done_when_compatible() {
@@ -1240,6 +1245,9 @@ test_local_only_force_overrides_unpushed() {
 
   expect_code 0 "$rc" "force-override: --force should bypass the unpushed-work check"
   ! grep -q REFUSED "$case_dir/stderr" || fail "force-override: REFUSED printed despite --force"
+  jq -e 'select(.id == "task-x1" and .outcome == "failed" and .note == "teardown force discard")' \
+    "$case_dir/data/dispatch-outcomes.jsonl" >/dev/null \
+    || fail "force-override: teardown did not record the forced discard outcome"
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
@@ -1262,6 +1270,39 @@ test_teardown_missing_busy_sidecar_completes() {
   assert_absent "$case_dir/state/task-x1.meta" \
     "missing-busy-sidecar: teardown remained incomplete"
   pass "teardown completes when an exact busy-state sidecar is already absent"
+}
+
+test_teardown_refuses_while_spawn_lifecycle_lock_is_held() {
+  local case_dir holder rc attempt
+  case_dir=$(make_case lifecycle-lock-held)
+  write_meta "$case_dir" local-only ship
+  bash -c '
+    STATE=$1
+    . "$2/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$STATE/.spawn-task-x1.lock" || exit 1
+    : >"$STATE/holder-ready"
+    while [ ! -e "$STATE/holder-release" ]; do sleep 0.05; done
+    fm_lock_release "$STATE/.spawn-task-x1.lock"
+  ' bash "$case_dir/state" "$ROOT" &
+  holder=$!
+  attempt=0
+  while [ ! -e "$case_dir/state/holder-ready" ] && [ "$attempt" -lt 100 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  [ -e "$case_dir/state/holder-ready" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "spawn lifecycle lock holder did not become ready"
+  }
+  rc=0
+  run_teardown "$case_dir" --force >"$case_dir/stdout" 2>"$case_dir/stderr" || rc=$?
+  [ "$rc" -ne 0 ] || fail "teardown succeeded while the spawn lifecycle lock was held"
+  assert_grep "lifecycle is busy" "$case_dir/stderr" "teardown did not explain lifecycle lock contention"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "contended teardown removed live task metadata"
+  : >"$case_dir/state/holder-release"
+  wait "$holder"
+  pass "teardown serializes with the per-task spawn lifecycle lock"
 }
 
 test_herdr_teardown_clears_escalation_marker() {
@@ -1833,6 +1874,7 @@ test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_missing_busy_sidecar_completes
+test_teardown_refuses_while_spawn_lifecycle_lock_is_held
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence

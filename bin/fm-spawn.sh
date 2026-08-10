@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout]
+# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--escalation-reservation <id>] [--scout]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
@@ -188,6 +188,7 @@ HARNESS_ARG=
 MODEL=
 EFFORT=
 BACKEND_ARG=
+ESCALATION_RESERVATION=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -204,6 +205,7 @@ for a in "$@"; do
       model) MODEL=$a; MODEL_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
+      escalation-reservation) ESCALATION_RESERVATION=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -220,6 +222,8 @@ for a in "$@"; do
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
     --backend) want_value=backend ;;
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
+    --escalation-reservation) want_value=escalation-reservation ;;
+    --escalation-reservation=*) ESCALATION_RESERVATION=${a#--escalation-reservation=} ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -228,6 +232,7 @@ done
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
+[ -z "$ESCALATION_RESERVATION" ] || case "$ESCALATION_RESERVATION" in *[!A-Za-z0-9._-]*) echo "error: invalid --escalation-reservation" >&2; exit 1 ;; esac
 case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
@@ -384,6 +389,7 @@ spawn_herdr_presentation_order_lock_release() {
 idpart=${POS[0]:-}
 idpart=${idpart%%=*}
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac; then
+  [ -z "$ESCALATION_RESERVATION" ] || { echo "error: batch dispatch does not support --escalation-reservation" >&2; exit 1; }
   if [ "$KIND" != secondmate ] && [ -z "$HARNESS_ARG" ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
     exit 1
@@ -419,6 +425,21 @@ if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
   exit 1
 fi
 SPAWN_TASK_LOCK_HELD=1
+RESERVATION_CLAIM="$STATE/.$ID.stuck-escalation-reservation"
+if [ -e "$RESERVATION_CLAIM" ] || [ -L "$RESERVATION_CLAIM" ]; then
+  [ -f "$RESERVATION_CLAIM" ] && [ ! -L "$RESERVATION_CLAIM" ] || {
+    echo "error: unsafe escalation reservation for task $ID" >&2
+    exit 1
+  }
+  CLAIMED_RESERVATION=$(grep '^transaction_id=' "$RESERVATION_CLAIM" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  [ -n "$ESCALATION_RESERVATION" ] && [ "$ESCALATION_RESERVATION" = "$CLAIMED_RESERVATION" ] || {
+    echo "error: task $ID is claimed by an escalation reservation; pass its exact --escalation-reservation" >&2
+    exit 1
+  }
+elif [ -n "$ESCALATION_RESERVATION" ]; then
+  echo "error: no escalation reservation claim exists for task $ID" >&2
+  exit 1
+fi
 PROJ=
 ARG3=
 FIRSTMATE_HOME=
@@ -1241,6 +1262,22 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 
+spawn_mark_launch_complete() {
+  perl -MIO::Handle -MFile::Basename=dirname -e '
+    use strict;
+    use warnings;
+    use Fcntl qw(:DEFAULT);
+    my ($path, $generation) = @ARGV;
+    sysopen(my $fh, $path, O_WRONLY | O_APPEND) or exit 1;
+    print {$fh} "launch_complete_generation=$generation\n" or exit 1;
+    defined $fh->sync() or exit 1;
+    close($fh) or exit 1;
+    sysopen(my $parent, dirname($path), O_RDONLY | O_DIRECTORY) or exit 1;
+    defined $parent->sync() or exit 1;
+    close($parent) or exit 1;
+  ' "$STATE/$ID.meta" "$SPAWN_GENERATION"
+}
+
 kimi_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
@@ -1602,6 +1639,7 @@ fi
 
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
+SPAWN_GENERATION="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null).${BASHPID:-$$}.${RANDOM:-0}"
 {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
@@ -1614,6 +1652,8 @@ META_WINDOW=$T
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  echo "spawn_generation=$SPAWN_GENERATION"
+  [ -z "$ESCALATION_RESERVATION" ] || echo "escalation_reservation=$ESCALATION_RESERVATION"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
@@ -1688,6 +1728,10 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
+spawn_mark_launch_complete || {
+  echo "error: could not persist launch completion for task $ID" >&2
+  exit 1
+}
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "kimi did not show a verified ready signal before brief delivery"

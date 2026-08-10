@@ -394,7 +394,7 @@ The skill owns the daemon procedure; these safety facts remain inline:
 
 ### Stuck-worker trigger
 
-Load `stuck-crewmate-recovery` after a stale wake, looping or confused pane, answered-by-brief question, unresponsive worker, or failed steer.
+Load `stuck-crewmate-recovery` after a stale wake, looping or confused pane, answered-by-brief question, unresponsive worker, or failed steer; it also owns when to consult outcome memory and classify or reserve and commit a one-step stronger-profile rerun.
 
 ## 9. Escalation and captain etiquette
 
