@@ -169,6 +169,35 @@ test_concurrent_records_do_not_interleave() {
   pass "fm-dispatch-outcome.sh: concurrent records serialize append"
 }
 
+test_record_waits_for_live_lock_holder() {
+  rm -f "$LOG_PATH" "$LOG_PATH.pending"
+  local ready="$TMP_ROOT/lock-holder.ready" holder rc line i=0
+  (
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$LOG_PATH.lock" || exit 1
+    : >"$ready"
+    sleep 2
+    fm_lock_release "$LOG_PATH.lock"
+  ) &
+  holder=$!
+  while [ ! -f "$ready" ] && [ "$i" -lt 200 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  [ -f "$ready" ] || {
+    wait "$holder" || true
+    fail "live lock holder did not become ready"
+  }
+  run_oc record after-live-holder --outcome "done" --note waited >/dev/null
+  rc=$?
+  wait "$holder" || fail "live lock holder failed"
+  expect_code 0 "$rc" "record should wait for a live outcome-log writer"
+  line=$(cat "$LOG_PATH")
+  assert_contains "$line" '"id":"after-live-holder"' "record after live holder was not appended"
+  pass "fm-dispatch-outcome.sh: record waits for a live outcome-log writer"
+}
+
 test_record_recovers_pending_partial_append() {
   local pending_line='{"id":"recovered","outcome":"done","note":"pending"}'
   printf '%s' "${pending_line%????????}" >"$LOG_PATH"
@@ -296,6 +325,7 @@ test_record_from_meta
 test_record_without_meta
 test_record_escapes_note
 test_concurrent_records_do_not_interleave
+test_record_waits_for_live_lock_holder
 test_record_recovers_pending_partial_append
 test_record_once_is_idempotent_under_lock
 test_record_once_distinguishes_reused_task_ids

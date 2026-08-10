@@ -108,18 +108,26 @@ ensure_log_parent() {
 }
 
 acquire_log_lock() {
-  local lock=$1 i=0 rc
-  while [ "$i" -lt 50 ]; do
+  local lock=$1 timeout now deadline rc
+  timeout=${FM_LOCK_ACQUIRE_WAIT_TIMEOUT:-${FM_LOCK_ACQUIRE_WAIT_TIMEOUT_DEFAULT:-10}}
+  case "$timeout" in
+    ''|*[!0-9]*) timeout=${FM_LOCK_ACQUIRE_WAIT_TIMEOUT_DEFAULT:-10} ;;
+    *) timeout=$((10#$timeout)) ;;
+  esac
+  [ "$timeout" -gt 0 ] || timeout=${FM_LOCK_ACQUIRE_WAIT_TIMEOUT_DEFAULT:-10}
+  now=$(date +%s) || return 1
+  deadline=$((now + timeout))
+  while :; do
     if fm_lock_try_acquire "$lock"; then
       return 0
     else
       rc=$?
     fi
     [ "$rc" -eq 125 ] && return 125
+    now=$(date +%s) || return 1
+    [ "$now" -lt "$deadline" ] || return 1
     sleep 0.02
-    i=$((i + 1))
   done
-  return 1
 }
 
 append_outcome_record() {
