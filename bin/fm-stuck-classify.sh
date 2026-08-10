@@ -1848,8 +1848,11 @@ cmd_escalate() {
       write_pending_escalation "$pending_path" "$prior_id" "$escalated_from_value" "$target_profile" "$new_id" "$note" \
         "$transaction_id" "$decision_id" "$prior_generation" || die "failed to create pending escalation record"
     fi
-    sync_regular_file "$claim_path" && sync_regular_file "$pending_path" && sync_state_directory \
-      || die "failed to make escalation reservation durable"
+    if ! sync_regular_file "$claim_path" \
+      || ! sync_regular_file "$pending_path" \
+      || ! sync_state_directory; then
+      die "failed to make escalation reservation durable"
+    fi
     printf 'verdict=reserved\n'
     printf 'prior_id=%s\n' "$prior_id"
     printf 'prior_profile=%s\n' "$(profile_display "$escalated_from_value")"
@@ -1863,8 +1866,11 @@ cmd_escalate() {
     return 0
   fi
 
-  sync_regular_file "$claim_path" && sync_regular_file "$pending_path" && sync_state_directory \
-    || die "failed to make pending escalation durable before commit"
+  if ! sync_regular_file "$claim_path" \
+    || ! sync_regular_file "$pending_path" \
+    || ! sync_state_directory; then
+    die "failed to make pending escalation durable before commit"
+  fi
   ensure_meta_field "$prior_meta" escalated_from "$(profile_display "$escalated_from_value")" \
     || die "failed to write prior escalation marker"
   ensure_meta_field "$new_meta" escalated_from "$(profile_display "$escalated_from_value")" \

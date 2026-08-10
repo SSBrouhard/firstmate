@@ -183,8 +183,8 @@ test_record_recovers_pending_partial_append() {
 test_record_once_is_idempotent_under_lock() {
   rm -f "$LOG_PATH" "$LOG_PATH.pending"
   write_meta teardown-id
-  run_oc record teardown-id --outcome done --note teardown --once >/dev/null
-  run_oc record teardown-id --outcome done --note teardown --once >/dev/null
+  run_oc record teardown-id --outcome "done" --note teardown --once >/dev/null
+  run_oc record teardown-id --outcome "done" --note teardown --once >/dev/null
   [ "$(wc -l <"$LOG_PATH" | tr -d ' ')" -eq 1 ] \
     || fail "--once appended a duplicate ending"
   pass "fm-dispatch-outcome.sh: --once deduplicates an ending under the log lock"
@@ -193,10 +193,10 @@ test_record_once_is_idempotent_under_lock() {
 test_record_once_distinguishes_reused_task_ids() {
   rm -f "$LOG_PATH" "$LOG_PATH.pending"
   write_meta reused-id
-  run_oc record reused-id --outcome done --note teardown --once >/dev/null
+  run_oc record reused-id --outcome "done" --note teardown --once >/dev/null
   sed -i.bak 's/spawn_generation=gen-reused-id/spawn_generation=gen-reused-id-2/' "$STATE_DIR/reused-id.meta"
   rm -f "$STATE_DIR/reused-id.meta.bak"
-  run_oc record reused-id --outcome done --note teardown --once >/dev/null
+  run_oc record reused-id --outcome "done" --note teardown --once >/dev/null
   [ "$(wc -l <"$LOG_PATH" | tr -d ' ')" -eq 2 ] \
     || fail "--once collapsed distinct task generations"
   pass "fm-dispatch-outcome.sh: --once keys idempotency by task generation"
