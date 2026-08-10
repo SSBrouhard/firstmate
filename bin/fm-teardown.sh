@@ -1538,6 +1538,22 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
+
+# Record the verified ending before metadata is removed.
+# This measurement is best-effort and never blocks otherwise-authorized cleanup.
+if [ "$KIND" != secondmate ] && [ -x "$SCRIPT_DIR/fm-dispatch-outcome.sh" ]; then
+  _fm_dispatch_outcome='done'
+  _fm_dispatch_note=teardown
+  if [ "$FORCE" = "--force" ]; then
+    _fm_dispatch_outcome=failed
+    _fm_dispatch_note="teardown force discard"
+  fi
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/fm-dispatch-outcome.sh" record "$ID" \
+    --outcome "$_fm_dispatch_outcome" --note "$_fm_dispatch_note" >/dev/null 2>&1 || true
+  unset _fm_dispatch_outcome _fm_dispatch_note
+fi
+
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \

@@ -72,7 +72,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/data" "$case_dir/config" "$fakebin"
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -493,6 +493,7 @@ run_teardown() {
   local case_dir=$1; shift
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_DATA_OVERRIDE="$case_dir/data" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:$PATH" \
     "$TEARDOWN" task-x1 "$@"
@@ -512,7 +513,10 @@ test_local_only_fork_remote_allows() {
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
-  pass "local-only worktree with HEAD on a fork remote is torn down (fix holds)"
+  jq -e 'select(.id == "task-x1" and .outcome == "done" and .note == "teardown")' \
+    "$case_dir/data/dispatch-outcomes.jsonl" >/dev/null \
+    || fail "fork-allow: teardown did not record the verified done outcome"
+  pass "local-only worktree with HEAD on a fork remote is torn down and measured"
 }
 
 test_teardown_prompts_tasks_axi_done_when_compatible() {
@@ -1240,6 +1244,9 @@ test_local_only_force_overrides_unpushed() {
 
   expect_code 0 "$rc" "force-override: --force should bypass the unpushed-work check"
   ! grep -q REFUSED "$case_dir/stderr" || fail "force-override: REFUSED printed despite --force"
+  jq -e 'select(.id == "task-x1" and .outcome == "failed" and .note == "teardown force discard")' \
+    "$case_dir/data/dispatch-outcomes.jsonl" >/dev/null \
+    || fail "force-override: teardown did not record the forced discard outcome"
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
