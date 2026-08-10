@@ -1549,6 +1549,7 @@ escalation_commit_settled() {
   [ -f "$new_meta" ] && [ ! -L "$new_meta" ] || return 1
   [ "$(meta_value "$prior_meta" escalated_from)" = "$from_display" ] || return 1
   [ "$(meta_value "$new_meta" escalated_from)" = "$from_display" ] || return 1
+  [ "$(meta_value "$new_meta" escalated_prior_id)" = "$prior_id" ] || return 1
   if [ -n "$note" ] && outcome_recorded "$prior_id" "$generation" "$note"; then
     :
   elif [ -f "$log_path" ] && jq -e -s \
@@ -1715,6 +1716,7 @@ cmd_escalate() {
   local pending_exists=0 requested_target new_existing_ef launch_complete_generation
   local prior_spawn_lock_held=0 new_spawn_lock_held=0 decision_log_lock='' decision_log_lock_held=0
   local first_spawn_lock second_spawn_lock first_spawn_holder second_spawn_holder
+  local ordered_ids first_id
   local from_display metrics_note
   decision_id=''
   transaction_id=''
@@ -2011,6 +2013,8 @@ cmd_escalate() {
     || die "failed to write prior escalation marker"
   ensure_meta_field "$new_meta" escalated_from "$from_display" \
     || die "failed to write new escalation marker"
+  ensure_meta_field "$new_meta" escalated_prior_id "$prior_id" \
+    || die "failed to write new escalation prior-id binding"
 
   if ! outcome_recorded "$prior_id" "$prior_generation" "$metrics_note"; then
     if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \

@@ -991,6 +991,36 @@ test_escalate_commit_idempotent_after_journal_cleared() {
   pass "fm-stuck-classify.sh: settled commit is idempotent when journal already cleared"
 }
 
+test_escalate_settled_check_rejects_wrong_new_id() {
+  # An unrelated new_meta that coincidentally shares the same escalated_from
+  # profile string must not let a commit retry with the wrong --new-id
+  # false-succeed through the idempotent settled fast path.
+  write_meta settlewrong1
+  log_escalate_decision settlewrong1
+  local out rc reserve reservation note
+  note="same test red after 2 rounds"
+  reserve=$(run_sc escalate settlewrong1 --target-profile claude/claude-sonnet-5/high \
+    --new-id settlewrong1-new --reserve --note "$note")
+  reservation=$(printf '%s\n' "$reserve" | awk -F= '$1 == "reservation_id" { print $2 }')
+  write_strong_meta settlewrong1-new "$reservation"
+  out=$(run_sc escalate settlewrong1 --target-profile claude/claude-sonnet-5/high \
+    --new-id settlewrong1-new --commit --note "$note"); rc=$?
+  expect_code 0 "$rc" "initial commit should succeed"
+  assert_contains "$out" "verdict=escalated" "initial commit verdict"
+
+  # A wholly unrelated task that happens to carry the same escalated_from
+  # profile string, but was never bound to settlewrong1's escalation.
+  write_meta settlewrong1-other "escalated_from=claude/claude-sonnet-5/high"
+
+  local err
+  err=$(run_sc escalate settlewrong1 --target-profile claude/claude-sonnet-5/high \
+    --new-id settlewrong1-other --commit --note "$note" 2>&1); rc=$?
+  expect_code 2 "$rc" "commit retry with wrong --new-id must not idempotently succeed"
+  assert_contains "$err" "already_escalated" "wrong --new-id retry should refuse, not report escalated"
+  assert_not_contains "$err" "verdict=escalated" "wrong --new-id retry must not report escalated"
+  pass "fm-stuck-classify.sh: settled check rejects a coincidentally matching but unbound new_meta"
+}
+
 test_escalate_refuses_missing_target() {
   write_meta cheap3
   local err rc
@@ -1073,6 +1103,7 @@ test_escalate_serializes_concurrent_apply
 test_escalate_acquires_dual_lifecycle_locks_before_meta_read
 test_escalate_reserve_linearizes_under_decision_log_lock
 test_escalate_commit_idempotent_after_journal_cleared
+test_escalate_settled_check_rejects_wrong_new_id
 test_escalate_refuses_missing_target
 test_n_env_override
 
