@@ -663,6 +663,7 @@ mode=no-mistakes
 model=$model
 effort=$effort
 spawn_generation=gen-$id
+launch_complete_generation=gen-$id
 escalation_reservation=$reservation
 EOF
 }

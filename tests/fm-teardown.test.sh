@@ -160,7 +160,8 @@ write_meta() {
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
-    "mode=$mode"
+    "mode=$mode" \
+    "spawn_generation=gen-task-x1"
 }
 
 # Commit something on the worktree's task branch. Args: case_dir [message]
@@ -1271,6 +1272,39 @@ test_teardown_missing_busy_sidecar_completes() {
   pass "teardown completes when an exact busy-state sidecar is already absent"
 }
 
+test_teardown_refuses_while_spawn_lifecycle_lock_is_held() {
+  local case_dir holder rc attempt
+  case_dir=$(make_case lifecycle-lock-held)
+  write_meta "$case_dir" local-only ship
+  bash -c '
+    STATE=$1
+    . "$2/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$STATE/.spawn-task-x1.lock" || exit 1
+    : >"$STATE/holder-ready"
+    while [ ! -e "$STATE/holder-release" ]; do sleep 0.05; done
+    fm_lock_release "$STATE/.spawn-task-x1.lock"
+  ' bash "$case_dir/state" "$ROOT" &
+  holder=$!
+  attempt=0
+  while [ ! -e "$case_dir/state/holder-ready" ] && [ "$attempt" -lt 100 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  [ -e "$case_dir/state/holder-ready" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "spawn lifecycle lock holder did not become ready"
+  }
+  rc=0
+  run_teardown "$case_dir" --force >"$case_dir/stdout" 2>"$case_dir/stderr" || rc=$?
+  [ "$rc" -ne 0 ] || fail "teardown succeeded while the spawn lifecycle lock was held"
+  assert_grep "lifecycle is busy" "$case_dir/stderr" "teardown did not explain lifecycle lock contention"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "contended teardown removed live task metadata"
+  : >"$case_dir/state/holder-release"
+  wait "$holder"
+  pass "teardown serializes with the per-task spawn lifecycle lock"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
@@ -1840,6 +1874,7 @@ test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_teardown_missing_busy_sidecar_completes
+test_teardown_refuses_while_spawn_lifecycle_lock_is_held
 test_herdr_teardown_clears_escalation_marker
 test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence

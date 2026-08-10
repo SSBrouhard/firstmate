@@ -966,7 +966,7 @@ profile_from_meta() {
 cmd_classify() {
   local endpoint_alive='' crew_state='' failure_class='' same_failure=''
   local fix_attempts='' recovery_exhausted='' self_report_only='' already_escalated=''
-  local id='' n_threshold='' as_json=0
+  local id='' n_threshold='' as_json=0 decision_generation=''
 
   endpoint_alive=unknown
   crew_state=unknown
@@ -1113,10 +1113,12 @@ cmd_classify() {
 
   if [ -n "$id" ]; then
     fm_task_id_path_safe "$id" || die "invalid task id '$id'"
-    if [ "$already_escalated" = unknown ]; then
-      local ef
-      if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
-        ef=$(meta_value "$STATE/$id.meta" escalated_from)
+    if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
+      local ef meta_snapshot
+      meta_snapshot=$(<"$STATE/$id.meta")
+      decision_generation=$(printf '%s\n' "$meta_snapshot" | awk -F= '$1 == "spawn_generation" { value=substr($0, index($0, "=") + 1) } END { print value }')
+      if [ "$already_escalated" = unknown ]; then
+        ef=$(printf '%s\n' "$meta_snapshot" | awk -F= '$1 == "escalated_from" { value=substr($0, index($0, "=") + 1) } END { print value }')
         if [ -n "$ef" ]; then
           already_escalated=yes
         else
@@ -1213,7 +1215,7 @@ cmd_classify() {
     detail="alive + capability + same failure after >=$n_threshold attempts + recovery exhausted"
   fi
 
-  local timestamp decision_id decision_generation decision_json output_json
+  local timestamp decision_id decision_json output_json
   printf -v output_json '{"verdict":"%s","reason":"%s","detail":"%s","endpoint_alive":"%s","crew_state":"%s","failure_class":"%s","same_failure":"%s","fix_attempts":%s,"n_threshold":%s,"recovery_exhausted":"%s","self_report_only":"%s","already_escalated":"%s","id":"%s"}' \
     "$(json_escape "$verdict")" \
     "$(json_escape "$reason")" \
@@ -1232,10 +1234,6 @@ cmd_classify() {
     if timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) \
       && [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
       decision_id="${timestamp}.${BASHPID:-$$}.${RANDOM:-0}"
-      decision_generation=''
-      if [ -n "$id" ] && [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
-        decision_generation=$(meta_value "$STATE/$id.meta" spawn_generation)
-      fi
       printf -v decision_json '{"timestamp":"%s","decision_id":"%s","id":"%s","generation":"%s","endpoint_alive":"%s","crew_state":"%s","failure_class":"%s","same_failure":"%s","fix_attempts":%s,"n_threshold":%s,"recovery_exhausted":"%s","self_report_only":"%s","already_escalated":"%s","verdict":"%s","reason":"%s","detail":"%s"}' \
         "$(json_escape "$timestamp")" \
         "$(json_escape "$decision_id")" \
@@ -1675,10 +1673,10 @@ cmd_escalate() {
   fi
 
   local prior_meta="$STATE/$prior_id.meta"
-  local existing_ef prior_profile escalated_from_value attempt_lock claim_lock resolved_target resolution new_meta
+  local existing_ef prior_profile escalated_from_value attempt_lock claim_lock new_spawn_lock resolved_target resolution new_meta
   local prior_generation decision_id transaction_id claim_path claim_transaction claim_prior claim_target claim_decision claim_generation new_generation new_reservation
   local pending_path pending_prior pending_from pending_target pending_new pending_note pending_transaction pending_decision pending_generation
-  local pending_exists=0 requested_target new_existing_ef
+  local pending_exists=0 requested_target new_existing_ef launch_complete_generation new_spawn_lock_held=0
   decision_id=''
   transaction_id=''
   claim_transaction=''
@@ -1709,7 +1707,17 @@ cmd_escalate() {
     fm_lock_release "$attempt_lock"
     die "another escalation reservation is in progress"
   fi
-  trap 'fm_lock_release "$claim_lock"; fm_lock_release "$attempt_lock"' EXIT
+  new_spawn_lock=
+  if [ -n "$new_id" ]; then
+    new_spawn_lock="$STATE/.spawn-$new_id.lock"
+    if ! fm_lock_try_acquire "$new_spawn_lock"; then
+      fm_lock_release "$claim_lock"
+      fm_lock_release "$attempt_lock"
+      die "task $new_id lifecycle is busy"
+    fi
+    new_spawn_lock_held=1
+  fi
+  trap '[ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"; fm_lock_release "$claim_lock"; fm_lock_release "$attempt_lock"' EXIT
 
   existing_ef=$(meta_value "$prior_meta" escalated_from)
   pending_path="$STATE/.$prior_id.stuck-escalate.pending"
@@ -1786,7 +1794,10 @@ cmd_escalate() {
     new_existing_ef=$(meta_value "$new_meta" escalated_from)
     new_reservation=$(meta_value "$new_meta" escalation_reservation)
     new_generation=$(meta_value "$new_meta" spawn_generation)
+    launch_complete_generation=$(meta_value "$new_meta" launch_complete_generation)
     [ -n "$new_generation" ] || die "new meta must record spawn_generation"
+    [ "$launch_complete_generation" = "$new_generation" ] \
+      || die "new meta does not prove launch completion for its spawn generation"
     [ "$new_reservation" = "$transaction_id" ] \
       || die "new meta is not bound to this escalation reservation"
     if [ "$pending_exists" -eq 1 ]; then
@@ -1820,6 +1831,7 @@ cmd_escalate() {
     printf 'metrics.thrash_cap=one_step\n'
     printf 'metrics.standing_profile_only=yes\n'
     trap - EXIT
+    [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
     fm_lock_release "$claim_lock"
     fm_lock_release "$attempt_lock"
     return 0
@@ -1845,6 +1857,7 @@ cmd_escalate() {
     printf 'new_id=%s\n' "$new_id"
     printf 'reservation_id=%s\n' "$transaction_id"
     trap - EXIT
+    [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
     fm_lock_release "$claim_lock"
     fm_lock_release "$attempt_lock"
     return 0
@@ -1879,6 +1892,7 @@ cmd_escalate() {
   printf 'metrics.standing_profile_only=yes\n'
   printf 'metrics.blocked_vs_escalated=escalated\n'
   trap - EXIT
+  [ "$new_spawn_lock_held" = 0 ] || fm_lock_release "$new_spawn_lock"
   fm_lock_release "$claim_lock"
   fm_lock_release "$attempt_lock"
   return 0

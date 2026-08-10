@@ -1262,6 +1262,22 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 
+spawn_mark_launch_complete() {
+  perl -MIO::Handle -MFile::Basename=dirname -e '
+    use strict;
+    use warnings;
+    use Fcntl qw(:DEFAULT);
+    my ($path, $generation) = @ARGV;
+    sysopen(my $fh, $path, O_WRONLY | O_APPEND) or exit 1;
+    print {$fh} "launch_complete_generation=$generation\n" or exit 1;
+    defined $fh->sync() or exit 1;
+    close($fh) or exit 1;
+    sysopen(my $parent, dirname($path), O_RDONLY | O_DIRECTORY) or exit 1;
+    defined $parent->sync() or exit 1;
+    close($parent) or exit 1;
+  ' "$STATE/$ID.meta" "$SPAWN_GENERATION"
+}
+
 kimi_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
@@ -1712,6 +1728,10 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
+spawn_mark_launch_complete || {
+  echo "error: could not persist launch completion for task $ID" >&2
+  exit 1
+}
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "kimi did not show a verified ready signal before brief delivery"

@@ -123,6 +123,23 @@ FM_LOCK_LOG_PREFIX=teardown
 
 META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+TEARDOWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
+fm_lock_try_acquire "$TEARDOWN_TASK_LOCK" || {
+  echo "error: task $ID lifecycle is busy; teardown did nothing" >&2
+  exit 1
+}
+TEARDOWN_TASK_LOCK_HELD=1
+TEARDOWN_HERDR_LOCK_RECORDS=
+teardown_release_all_locks() {
+  teardown_release_herdr_locks
+  if [ "$TEARDOWN_TASK_LOCK_HELD" = 1 ]; then
+    TEARDOWN_TASK_LOCK_HELD=0
+    fm_lock_release "$TEARDOWN_TASK_LOCK" || true
+  fi
+}
+trap teardown_release_all_locks EXIT
 # This is the first cleanup authorization check. It is metadata-only and must
 # complete before fm-guard, a backend command, file removal, branch deletion,
 # worktree return, registry change, or process termination can run.
@@ -140,6 +157,7 @@ PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 # (/tmp/fm-<id>/); absent for tasks spawned before that change, so tolerate empty.
 TASK_TMP=$(grep '^tasktmp=' "$META" | cut -d= -f2- || true)
 BUSY_GEN=$(fm_meta_get "$META" busy_gen)
+SPAWN_GENERATION=$(fm_meta_get "$META" spawn_generation)
 if [ -z "$BUSY_GEN" ]; then
   BUSY_GEN=$(cat "$STATE/$ID.busy-gen" 2>/dev/null || true)
 fi
@@ -1178,7 +1196,7 @@ $session	$lock_path"
       else
         TEARDOWN_HERDR_LOCK_RECORDS="$session	$lock_path"
       fi
-      trap teardown_release_herdr_locks EXIT
+      trap teardown_release_all_locks EXIT
       return 0
     fi
     sleep 0.1
@@ -1541,6 +1559,11 @@ remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 
 # Record the verified ending before metadata is removed.
 # This measurement is best-effort and never blocks otherwise-authorized cleanup.
+CURRENT_SPAWN_GENERATION=$(fm_meta_get "$META" spawn_generation)
+[ "$CURRENT_SPAWN_GENERATION" = "$SPAWN_GENERATION" ] || {
+  echo "error: task $ID generation changed during teardown; retaining task records" >&2
+  exit 1
+}
 if [ "$KIND" != secondmate ] && [ -x "$SCRIPT_DIR/fm-dispatch-outcome.sh" ]; then
   _fm_dispatch_outcome='done'
   _fm_dispatch_note=teardown
@@ -1555,6 +1578,10 @@ if [ "$KIND" != secondmate ] && [ -x "$SCRIPT_DIR/fm-dispatch-outcome.sh" ]; the
 fi
 
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
+[ "$(fm_meta_get "$META" spawn_generation)" = "$SPAWN_GENERATION" ] || {
+  echo "error: task $ID generation changed during teardown; retaining task metadata" >&2
+  exit 1
+}
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token"

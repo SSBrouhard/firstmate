@@ -103,7 +103,8 @@ run_lab() {
     FM_HOME="$LAB_HOME" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$LAB_STATE" FM_DATA_OVERRIDE="$LAB_DATA" \
     FM_CONFIG_OVERRIDE="$LAB_CONFIG" \
-    FM_DISPATCH_OUTCOME_BIN="$OUTCOME" FM_DISPATCH_OUTCOMES="$LAB_OUTCOMES" \
+    FM_DISPATCH_OUTCOME_BIN="${FM_TEST_OUTCOME_BIN:-$OUTCOME}" FM_DISPATCH_OUTCOMES="$LAB_OUTCOMES" \
+    FM_FAIL_ONCE_MARKER="${FM_FAIL_ONCE_MARKER:-}" FM_REAL_OUTCOME="$OUTCOME" \
     FM_STUCK_CLASSIFY_LOG="$LAB_DECISIONS" FM_STUCK_CLASSIFY_N=2 \
     "$@"
 }
@@ -171,6 +172,7 @@ effort=$effort
 kind=ship
 mode=no-mistakes
 spawn_generation=gen-$id
+launch_complete_generation=gen-$id
 EOF
   [ -z "$reservation" ] || printf 'escalation_reservation=%s\n' "$reservation" >>"$LAB_STATE/$id.meta"
 }
@@ -188,11 +190,24 @@ reserve_output=$(run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile
   --new-id l1-policy-follow --reserve --dispatch "$LAB_CONFIG/crew-dispatch.json")
 reservation_id=$(printf '%s\n' "$reserve_output" | awk -F= '$1 == "reservation_id" { print $2 }')
 [ -n "$reservation_id" ] || { echo "not ok - reservation identity missing" >&2; exit 1; }
-write_meta l1-policy-follow medium "$reservation_id"
+write_meta l1-policy-follow high "$reservation_id"
+
+FAIL_ONCE_OUTCOME="$LAB_HOME/fail-once-outcome.sh"
+FAIL_ONCE_MARKER="$LAB_HOME/fail-once-outcome.marker"
+cat >"$FAIL_ONCE_OUTCOME" <<'SH'
+#!/usr/bin/env bash
+if [ ! -e "$FM_FAIL_ONCE_MARKER" ]; then
+  : >"$FM_FAIL_ONCE_MARKER"
+  exit 1
+fi
+exec "$FM_REAL_OUTCOME" "$@"
+SH
+chmod +x "$FAIL_ONCE_OUTCOME"
 
 before_lines=0
 [ ! -f "$LAB_OUTCOMES" ] || before_lines=$(wc -l <"$LAB_OUTCOMES" | tr -d ' ')
-if run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
+if FM_TEST_OUTCOME_BIN="$FAIL_ONCE_OUTCOME" FM_FAIL_ONCE_MARKER="$FAIL_ONCE_MARKER" \
+  run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
   --new-id l1-policy-follow --commit --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null 2>&1; then
   echo "not ok - apply failure boundary unexpectedly succeeded" >&2
   stateful_failures=$((stateful_failures + 1))
@@ -200,11 +215,12 @@ fi
 after_lines=0
 [ ! -f "$LAB_OUTCOMES" ] || after_lines=$(wc -l <"$LAB_OUTCOMES" | tr -d ' ')
 [ "$before_lines" = "$after_lines" ] || stateful_failures=$((stateful_failures + 1))
-! grep -q '^escalated_from=' "$LAB_STATE/l1-policy-prior.meta" || stateful_failures=$((stateful_failures + 1))
+grep -q '^escalated_from=codex/gpt-policy/medium$' "$LAB_STATE/l1-policy-prior.meta" || stateful_failures=$((stateful_failures + 1))
+grep -q '^escalated_from=codex/gpt-policy/medium$' "$LAB_STATE/l1-policy-follow.meta" || stateful_failures=$((stateful_failures + 1))
+[ "$(grep -c '^escalated_from=' "$LAB_STATE/l1-policy-prior.meta")" -eq 1 ] || stateful_failures=$((stateful_failures + 1))
 [ -f "$LAB_STATE/.l1-policy-prior.stuck-escalate.pending" ] || stateful_failures=$((stateful_failures + 1))
 [ -f "$LAB_STATE/.l1-policy-follow.stuck-escalation-reservation" ] || stateful_failures=$((stateful_failures + 1))
 
-write_meta l1-policy-follow high "$reservation_id"
 run_lab "$CLASSIFIER" escalate l1-policy-prior --target-profile codex/gpt-policy/high \
   --new-id l1-policy-follow --commit --dispatch "$LAB_CONFIG/crew-dispatch.json" >/dev/null
 run_lab "$OUTCOME" record l1-policy-follow --outcome 'done' --note 'synthetic terminal follow-on' >/dev/null

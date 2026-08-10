@@ -667,6 +667,42 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
   pass "active crew-dispatch profile does not block secondmate launches"
 }
 
+test_escalation_reservation_bridge() {
+  local rec id token out status generation
+  id=profile-reserved-z20
+  token=reservation-z20
+  rec=$(make_spawn_case profile-reserved codex "$id")
+  read_case_record "$rec"
+  printf 'transaction_id=%s\n' "$token" >"$HOME_DIR/state/.$id.stuck-escalation-reservation"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --escalation-reservation "$token")
+  status=$?
+  expect_code 0 "$status" "spawn with the exact reservation token should succeed"
+  assert_grep "escalation_reservation=$token" "$HOME_DIR/state/$id.meta" "spawn metadata omitted the reservation identity"
+  generation=$(sed -n 's/^spawn_generation=//p' "$HOME_DIR/state/$id.meta")
+  [ -n "$generation" ] || fail "reserved spawn metadata omitted its generation"
+  assert_grep "launch_complete_generation=$generation" "$HOME_DIR/state/$id.meta" "reserved spawn metadata omitted generation-bound launch completion"
+
+  id=profile-reserved-missing-z21
+  rec=$(make_spawn_case profile-reserved-missing codex "$id")
+  read_case_record "$rec"
+  printf 'transaction_id=%s\n' "$token" >"$HOME_DIR/state/.$id.stuck-escalation-reservation"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn without the claimed reservation token unexpectedly succeeded"
+  assert_absent "$HOME_DIR/state/$id.meta" "missing-token refusal published task metadata"
+
+  id=profile-reserved-wrong-z22
+  rec=$(make_spawn_case profile-reserved-wrong codex "$id")
+  read_case_record "$rec"
+  printf 'transaction_id=%s\n' "$token" >"$HOME_DIR/state/.$id.stuck-escalation-reservation"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --escalation-reservation wrong-token)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn with the wrong reservation token unexpectedly succeeded"
+  assert_absent "$HOME_DIR/state/$id.meta" "wrong-token refusal published task metadata"
+  pass "spawn binds exact escalation reservations to launched generations"
+}
+
 test_no_profile_keeps_claude_profile_defaults
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
@@ -693,5 +729,6 @@ test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
 test_active_dispatch_profile_does_not_block_secondmate_launch
+test_escalation_reservation_bridge
 
 echo "# all fm-spawn-dispatch-profile tests passed"
