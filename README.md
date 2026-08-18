@@ -196,6 +196,7 @@ Firstmate's skills live in two separate places with different audiences:
 
 ## Documentation
 
+- [FORK.md](FORK.md) - remotes, the fetch-only `upstream-main` mirror, and how to review Kun's `main` into this public fork.
 - [docs/architecture.md](docs/architecture.md) - maintainer architecture for the crew, supervision, worktrees, secondmates, and project modes.
 - [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, runtime backend selection, optional X mode, the files you set, and harness support.
 - [docs/calm.md](docs/calm.md) - current Pi `/calm` behavior and supported presentation limits.
