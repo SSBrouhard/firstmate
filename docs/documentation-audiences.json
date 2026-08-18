@@ -24,6 +24,7 @@
     "operator-example"
   ],
   "readmeSetupTargets": [
+    "FORK.md",
     "docs/configuration.md",
     "docs/wedge-alarm.md",
     "docs/tmux-backend.md",
@@ -188,6 +189,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "FORK.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "README.md",
       "audience": "public-product"
     },
@@ -326,6 +331,10 @@
     {
       "path": "docs/verification/supervision.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/WORKLOG.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/watcher-continuity.md",
