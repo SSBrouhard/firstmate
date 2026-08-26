@@ -50,7 +50,7 @@ case "${1:-}" in
       for a in "$@"; do
         case "$a" in
           "export TRACEPARENT="*)
-            chmod a-w "$FM_FAKE_META_PATH"
+            : > "$FM_FAKE_META_APPEND_FAIL_MARKER"
             ;;
         esac
       done
@@ -78,6 +78,19 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  cat > "$fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ -f "${FM_FAKE_META_APPEND_FAIL_MARKER:-}" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *.meta.trace.*) exit 1 ;;
+    esac
+  done
+fi
+exec /bin/mv "$@"
+SH
+  chmod +x "$fakebin/mv"
   fm_fake_exit0 "$fakebin" treehouse
   printf '%s\n' "$fakebin"
 }
@@ -117,7 +130,7 @@ run_spawn() {
     FM_FAKE_TRACEPARENT_SEND_FAIL="${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" \
     FM_FAKE_TRACEPARENT_SEND_UNSAFE="${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" \
     FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
-    FM_FAKE_META_PATH="$home/state/$1.meta" \
+    FM_FAKE_META_APPEND_FAIL_MARKER="$home/state/.fake-meta-append-fail" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
