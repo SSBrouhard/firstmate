@@ -1377,6 +1377,8 @@ test_teardown_early_exit_releases_spawn_lifecycle_lock() {
   rc=0
   run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   expect_code 1 "$rc" "early-exit-lifecycle-lock-release: teardown changed the endpoint refusal status"
+  assert_absent "$case_dir/state/.spawn-task-x1.lock" \
+    "early-exit-lifecycle-lock-release: teardown EXIT left the spawn lifecycle lock behind"
 
   bash -c '
     STATE=$1
