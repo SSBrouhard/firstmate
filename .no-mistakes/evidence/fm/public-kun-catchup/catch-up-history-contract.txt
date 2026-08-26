@@ -1,0 +1,14 @@
+Public/Kun catch-up history contract
+HEAD: 2481343
+Merge parents: 93178ef25b8973ae46752048b1c285d48c02a530 9ce69acf95b901cb6dc38dd5fa55f37a8038e16c
+reachable aee508a: yes
+reachable 85bcbcd: yes
+reachable 93178ef: yes
+reachable 9ce69ac: yes
+Upstream parent equals recorded Kun main: yes
+Catch-up branch is not public base: yes
+Delivery records
+origin fetch: https://github.com/SSBrouhard/firstmate.git
+origin push: https://github.com/SSBrouhard/firstmate.git
+WORKLOG records Kun main 9ce69ac, all three retained public commits, merge-not-rebase, and no force-push: yes
+Note: this isolated gate worktree exposes no local upstream remote, so its fetch-only push URL cannot be re-demonstrated in this phase.
