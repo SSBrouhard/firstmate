@@ -258,12 +258,22 @@ META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 # Serialize with spawn's per-task lifecycle lock so an in-flight spawn cannot
 # race cleanup. The control lock is acquired first; this lock uses the same
-# path spawn holds for the task.
+# path spawn holds for the task. Local teardown refuses immediately so a
+# contended local spawn is not waited out. Remote retirement waits: an
+# in-flight remote respawn already holds this lock, and failing fast would
+# skip the later remote-lock wait and look like retirement bypassed it.
 TEARDOWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
-fm_lock_try_acquire "$TEARDOWN_TASK_LOCK" || {
-  echo "error: task $ID lifecycle is busy; teardown did nothing" >&2
-  exit 1
-}
+if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
+  fm_lock_acquire_wait "$TEARDOWN_TASK_LOCK" || {
+    echo "error: task $ID lifecycle is busy; teardown did nothing" >&2
+    exit 1
+  }
+else
+  fm_lock_try_acquire "$TEARDOWN_TASK_LOCK" || {
+    echo "error: task $ID lifecycle is busy; teardown did nothing" >&2
+    exit 1
+  }
+fi
 TEARDOWN_TASK_LOCK_HELD=1
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
@@ -2830,11 +2840,16 @@ remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 
 # Record the verified ending before metadata is removed.
 # This measurement is best-effort and never blocks otherwise-authorized cleanup.
-CURRENT_SPAWN_GENERATION=$(fm_meta_get "$META" spawn_generation)
-[ "$CURRENT_SPAWN_GENERATION" = "$SPAWN_GENERATION" ] || {
-  echo "error: task $ID generation changed during teardown; retaining task records" >&2
-  exit 1
-}
+# spawn_generation is a unique public local-spawn settle token. Remote
+# secondmate meta does not record it, and remote retirement is serialized by
+# the spawn lifecycle lock wait above rather than this TOCTOU check.
+if [ -n "$SPAWN_GENERATION" ] && [ "$KIND" != secondmate ]; then
+  CURRENT_SPAWN_GENERATION=$(fm_meta_get "$META" spawn_generation)
+  [ "$CURRENT_SPAWN_GENERATION" = "$SPAWN_GENERATION" ] || {
+    echo "error: task $ID generation changed during teardown; retaining task records" >&2
+    exit 1
+  }
+fi
 if [ "$KIND" != secondmate ] && [ -x "$SCRIPT_DIR/fm-dispatch-outcome.sh" ]; then
   _fm_dispatch_outcome='done'
   _fm_dispatch_note=teardown
@@ -2849,10 +2864,12 @@ if [ "$KIND" != secondmate ] && [ -x "$SCRIPT_DIR/fm-dispatch-outcome.sh" ]; the
 fi
 
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
-[ "$(fm_meta_get "$META" spawn_generation)" = "$SPAWN_GENERATION" ] || {
-  echo "error: task $ID generation changed during teardown; retaining task metadata" >&2
-  exit 1
-}
+if [ -n "$SPAWN_GENERATION" ] && [ "$KIND" != secondmate ]; then
+  [ "$(fm_meta_get "$META" spawn_generation)" = "$SPAWN_GENERATION" ] || {
+    echo "error: task $ID generation changed during teardown; retaining task metadata" >&2
+    exit 1
+  }
+fi
 status_retire_presentation_task "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \

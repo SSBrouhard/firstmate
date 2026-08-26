@@ -626,6 +626,7 @@ spawn_remote_secondmate() {
     echo "effort=${effort#-}"
     echo "home=$home"
     echo "projects=$(secondmate_registry_field "$DATA/secondmates.md" "$id" projects)"
+    echo "spawn_generation=$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null).${BASHPID:-$$}.${RANDOM:-0}"
     echo "remote_host=$host"
     echo "remote_root=$root"
     echo "remote_backend=$remote_backend"
@@ -2896,8 +2897,10 @@ if [ "$HARNESS" = kimi ]; then
   fi
 fi
 spawn_mark_launch_complete || {
-  echo "error: could not persist launch completion for task $ID" >&2
-  exit 1
+  # Launch already happened. A later metadata append failure (including a
+  # failed traceparent= append that leaves meta unwritable) must not abort
+  # a spawn that already created the pane.
+  echo "warning: could not persist launch completion for task $ID" >&2
 }
 if [ "$KIND" = secondmate ] && [ "${FM_SKIP_SECONDMATE_INHERIT:-0}" != 1 ]; then
   if ! fm_config_reread_discard_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
